@@ -22,6 +22,139 @@ interface TableInfo {
     rowCount?: number;
 }
 
+// Comprehensive query syntax validation for all database types
+function validateQuerySyntax(query: string, dbType: string): string {
+    const lowerQuery = query.toLowerCase();
+    const warnings: string[] = [];
+
+    if (dbType === 'postgresql') {
+        // PostgreSQL-specific validations
+        if (lowerQuery.includes('auto_increment')) {
+            warnings.push('AUTO_INCREMENT → Use SERIAL or BIGSERIAL instead');
+        }
+        if (lowerQuery.match(/\bint\s+auto_increment/i)) {
+            warnings.push('INT AUTO_INCREMENT → Use SERIAL PRIMARY KEY');
+        }
+        if (lowerQuery.includes('tinyint')) {
+            warnings.push('TINYINT → Use SMALLINT or BOOLEAN instead');
+        }
+        if (lowerQuery.match(/\bvarchar\(\d+\)/)) {
+            // This is fine, but suggest TEXT for large strings
+            if (!lowerQuery.includes('text')) {
+                const match = lowerQuery.match(/varchar\((\d+)\)/);
+                if (match && parseInt(match[1]) > 1000) {
+                    warnings.push('VARCHAR(>1000) → Consider using TEXT type');
+                }
+            }
+        }
+        if (lowerQuery.includes('datetime')) {
+            warnings.push('DATETIME → PostgreSQL uses TIMESTAMP');
+        }
+        if (lowerQuery.includes('double')) {
+            warnings.push('DOUBLE → Use DOUBLE PRECISION or NUMERIC');
+        }
+        if (lowerQuery.includes('mediumtext') || lowerQuery.includes('longtext')) {
+            warnings.push('MEDIUMTEXT/LONGTEXT → Use TEXT in PostgreSQL');
+        }
+    }
+
+    if (dbType === 'mysql' || dbType === 'mariadb') {
+        // MySQL/MariaDB-specific validations
+        if (lowerQuery.includes('serial')) {
+            warnings.push('SERIAL → Use AUTO_INCREMENT instead');
+        }
+        if (lowerQuery.match(/\bboolean\b/)) {
+            warnings.push('BOOLEAN → Use TINYINT(1) in MySQL');
+        }
+        if (lowerQuery.includes('bigserial')) {
+            warnings.push('BIGSERIAL → Use BIGINT AUTO_INCREMENT');
+        }
+        if (lowerQuery.match(/\btimestamp\b/) && !lowerQuery.includes('default')) {
+            warnings.push('TIMESTAMP should have DEFAULT CURRENT_TIMESTAMP');
+        }
+        if (lowerQuery.match(/\btext\b/) && !lowerQuery.includes('longtext') && !lowerQuery.includes('mediumtext')) {
+            warnings.push('TEXT in MySQL is limited to 65KB. Consider MEDIUMTEXT or LONGTEXT');
+        }
+        if (lowerQuery.includes('double precision')) {
+            warnings.push('DOUBLE PRECISION → Use DOUBLE in MySQL');
+        }
+        if (lowerQuery.includes('smallserial')) {
+            warnings.push('SMALLSERIAL → Use SMALLINT AUTO_INCREMENT');
+        }
+    }
+
+    if (dbType === 'mongodb') {
+        // MongoDB-specific validations
+        if (lowerQuery.includes('select') || lowerQuery.includes('insert') || lowerQuery.includes('create')) {
+            warnings.push('MongoDB uses JSON format, not SQL! Example: {"find": "collection", "filter": {}}');
+        }
+
+        // Check if valid JSON
+        try {
+            const parsed = JSON.parse(query);
+
+            // Validate MongoDB query structure
+            if (!parsed.find && !parsed.aggregate && !parsed.insert && !parsed.update && !parsed.delete) {
+                warnings.push('MongoDB query must have: find, aggregate, insert, update, or delete');
+            }
+
+            // Check for common mistakes
+            if (parsed.find && !parsed.filter && Object.keys(parsed).length === 1) {
+                warnings.push('Tip: Add "filter" field for query conditions. Example: {"find": "users", "filter": {"age": {"$gt": 18}}}');
+            }
+        } catch (e) {
+            warnings.push('Invalid JSON format! MongoDB queries must be valid JSON');
+        }
+    }
+
+    if (dbType === 'redis') {
+        // Redis-specific validations
+        if (lowerQuery.includes('select') || lowerQuery.includes('insert') || lowerQuery.includes('create')) {
+            warnings.push('Redis uses JSON format, not SQL! Example: {"command": "GET", "args": ["mykey"]}');
+        }
+
+        // Check if valid JSON
+        try {
+            const parsed = JSON.parse(query);
+
+            if (!parsed.command) {
+                warnings.push('Redis query must have "command" field. Example: {"command": "KEYS", "args": ["*"]}');
+            }
+        } catch (e) {
+            warnings.push('Invalid JSON format! Redis queries must be valid JSON');
+        }
+    }
+
+    // Common validations for SQL databases
+    if (dbType === 'postgresql' || dbType === 'mysql' || dbType === 'mariadb') {
+        // Check for missing semicolon at end (optional but good practice)
+        if (!query.trim().endsWith(';') && !query.trim().endsWith('}')) {
+            // This is just a tip, not critical
+        }
+
+        // Warn about SELECT * in production
+        if (lowerQuery.includes('select *') && !lowerQuery.includes('limit')) {
+            warnings.push('Tip: Consider adding LIMIT clause to SELECT * queries');
+        }
+
+        // Check for DROP without IF EXISTS
+        if (lowerQuery.includes('drop table') && !lowerQuery.includes('if exists')) {
+            warnings.push('Safety: Consider using DROP TABLE IF EXISTS');
+        }
+    }
+
+    // Return formatted warning message
+    if (warnings.length === 0) {
+        return '';
+    }
+
+    if (warnings.length === 1) {
+        return `⚠️ ${warnings[0]}`;
+    }
+
+    return `⚠️ Syntax Warnings:\n${warnings.map((w, i) => `${i + 1}. ${w}`).join('\n')}`;
+}
+
 export default function QueryPage() {
     const searchParams = useSearchParams();
     const connectionId = searchParams?.get('connection');
@@ -31,15 +164,29 @@ export default function QueryPage() {
     const [result, setResult] = useState<QueryResult | null>(null);
     const [executing, setExecuting] = useState(false);
     const [error, setError] = useState('');
+    const [warning, setWarning] = useState('');
+    const [connectionInfo, setConnectionInfo] = useState<any>(null);
     const [schemas, setSchemas] = useState<any[]>([]);
     const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set(['public']));
     const [schemaTables, setSchemaTables] = useState<Map<string, TableInfo[]>>(new Map());
 
     useEffect(() => {
         if (connectionId) {
+            fetchConnectionInfo();
             fetchSchemas();
         }
     }, [connectionId]);
+
+    const fetchConnectionInfo = async () => {
+        try {
+            const res = await fetch('/api/connections');
+            const data = await res.json();
+            const conn = data.connections?.find((c: any) => c.id === connectionId);
+            setConnectionInfo(conn);
+        } catch (err) {
+            console.error('Failed to fetch connection info:', err);
+        }
+    };
 
     const fetchSchemas = async () => {
         try {
@@ -82,7 +229,16 @@ export default function QueryPage() {
 
         setExecuting(true);
         setError('');
+        setWarning('');
         setResult(null);
+
+        // Validate query syntax for database type
+        if (connectionInfo) {
+            const syntaxWarning = validateQuerySyntax(query, connectionInfo.type);
+            if (syntaxWarning) {
+                setWarning(syntaxWarning);
+            }
+        }
 
         try {
             const res = await fetch('/api/query', {
@@ -226,6 +382,24 @@ export default function QueryPage() {
 
                 {/* Main Content */}
                 <div className="flex-1 flex flex-col">
+                    {/* Top Bar - Database Info */}
+                    {connectionInfo && (
+                        <div className="bg-accent/30 border-b border-border px-6 py-3 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                    <Database className="w-4 h-4 text-primary" />
+                                    <span className="font-semibold">{connectionInfo.name}</span>
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                    Type: <span className="font-mono bg-background px-2 py-0.5 rounded">{connectionInfo.type.toUpperCase()}</span>
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                    {connectionInfo.host}:{connectionInfo.port}/{connectionInfo.database}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Toolbar */}
                     <div className="border-b border-border p-4 flex items-center gap-4">
                         <button
@@ -292,11 +466,15 @@ export default function QueryPage() {
                     <div className="flex-1 overflow-auto p-4">
                         {error && (
                             <div className="p-4 bg-destructive/10 border border-destructive text-destructive rounded-lg mb-4">
-                                <div className="font-semibold mb-1">Error</div>
-                                <div className="text-sm">{error}</div>
+                                {error}
                             </div>
                         )}
 
+                        {warning && (
+                            <div className="p-4 bg-amber-500/10 border border-amber-500 text-amber-600 dark:text-amber-400 rounded-lg mb-4">
+                                {warning}
+                            </div>
+                        )}
                         {result && !error && (
                             <div>
                                 <div className="mb-4 text-sm text-muted-foreground">

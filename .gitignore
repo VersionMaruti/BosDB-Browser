@@ -18,8 +18,10 @@ out/
 .env.local
 .env.development.local
 .env.test.local
-.env.production.local
+.env.production.l# BosDB data files
 .bosdb-connections.json
+.bosdb-query-history.json
+.bosdb-saved-queries.json
 
 # Logs
 logs/

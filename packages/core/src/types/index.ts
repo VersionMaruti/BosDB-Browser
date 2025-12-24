@@ -3,7 +3,7 @@
  */
 
 // Database Types
-export type DatabaseType = 'postgresql' | 'mysql' | 'mongodb';
+export type DatabaseType = 'postgresql' | 'mysql' | 'mariadb' | 'mongodb' | 'redis';
 
 export type DatabaseStatus = 'connected' | 'disconnected' | 'connecting' | 'error';
 

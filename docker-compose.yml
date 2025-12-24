@@ -23,6 +23,35 @@ services:
     volumes:
       - redis_data:/data
 
+  # MySQL for testing MySQL adapter
+  mysql:
+    image: mysql:8.0
+    container_name: bosdb-mysql-test
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+    ports:
+      - '3306:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  # MongoDB for testing MongoDB adapter
+  mongodb:
+    image: mongo:7
+    container_name: bosdb-mongodb-test
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+      MONGO_INITDB_DATABASE: testdb
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongodb_data:/data/db
+
 volumes:
   postgres_data:
   redis_data:
+  mysql_data:
+  mongodb_data:

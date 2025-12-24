@@ -5,6 +5,7 @@ import { validateQuery, isReadOnlyQuery } from '@bosdb/security';
 import { Logger } from '@bosdb/utils';
 import type { QueryRequest } from '@bosdb/core';
 import { connections, adapterInstances } from '@/lib/store';
+import { addQueryToHistory } from '@/lib/queryStore';
 
 const logger = new Logger('QueryAPI');
 
@@ -103,12 +104,49 @@ export async function POST(request: NextRequest) {
             `Query executed: ${query.substring(0, 50)}... (${result.executionTime}ms, ${result.rowCount} rows)`
         );
 
+        // Add to query history
+        try {
+            addQueryToHistory({
+                connectionId,
+                connectionName: connectionInfo.name,
+                query,
+                executedAt: new Date().toISOString(),
+                executionTime: result.executionTime,
+                rowCount: result.rowCount,
+                success: true,
+            });
+        } catch (historyError) {
+            // Don't fail query if history fails
+            logger.error('Failed to save query history', historyError);
+        }
+
         return NextResponse.json({
             success: true,
             ...result,
         });
     } catch (error: any) {
         logger.error('Query execution failed', error);
+
+        // Add failed query to history (with safe access)
+        try {
+            const body = await request.clone().json();
+            const connInfo = connections.get(body.connectionId);
+            if (connInfo) {
+                addQueryToHistory({
+                    connectionId: body.connectionId,
+                    connectionName: connInfo.name,
+                    query: body.query,
+                    executedAt: new Date().toISOString(),
+                    executionTime: 0,
+                    rowCount: 0,
+                    success: false,
+                    error: error.message,
+                });
+            }
+        } catch (historyError) {
+            logger.error('Failed to save failed query to history', historyError);
+        }
+
         return NextResponse.json(
             {
                 error: 'Query execution failed',

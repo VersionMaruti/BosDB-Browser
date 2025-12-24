@@ -47,12 +47,16 @@ export default function DashboardPage() {
                             <span className="text-2xl font-bold">BosDB</span>
                         </Link>
                         <div className="flex items-center gap-4">
-                            <button className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">
-                                Documentation
-                            </button>
-                            <button className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">
-                                Settings
-                            </button>
+                            <Link href="/docs">
+                                <button className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">
+                                    Documentation
+                                </button>
+                            </Link>
+                            <Link href="/settings">
+                                <button className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">
+                                    Settings
+                                </button>
+                            </Link>
                         </div>
                     </div>
                 </div>
@@ -80,16 +84,19 @@ export default function DashboardPage() {
                         title="Run Query"
                         description="Execute SQL queries"
                         disabled={connections.length === 0}
+                        href={connections.length > 0 ? `/query?connection=${connections[0].id}` : undefined}
                     />
                     <QuickActionCard
                         icon={<History className="w-6 h-6" />}
                         title="Query History"
                         description="View past queries"
+                        href="/history"
                     />
                     <QuickActionCard
                         icon={<Save className="w-6 h-6" />}
                         title="Saved Queries"
                         description="Access saved queries"
+                        href="/saved-queries"
                     />
                 </div>
 
@@ -144,25 +151,42 @@ function QuickActionCard({
     description,
     onClick,
     disabled,
+    href,
 }: {
     icon: React.ReactNode;
     title: string;
     description: string;
     onClick?: () => void;
     disabled?: boolean;
+    href?: string;
 }) {
-    return (
-        <button
-            onClick={onClick}
-            disabled={disabled}
-            className={`p-6 bg-card border border-border rounded-lg text-left transition-all hover:border-primary hover:shadow-lg group ${disabled ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-        >
+    const content = (
+        <>
             <div className="text-primary mb-3 group-hover:scale-110 transition-transform">
                 {icon}
             </div>
             <h3 className="font-semibold mb-1">{title}</h3>
             <p className="text-sm text-muted-foreground">{description}</p>
+        </>
+    );
+
+    const className = `p-6 bg-card border border-border rounded-lg text-left transition-all hover:border-primary hover:shadow-lg group ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`;
+
+    if (href && !disabled) {
+        return (
+            <Link href={href} className={className}>
+                {content}
+            </Link>
+        );
+    }
+
+    return (
+        <button
+            onClick={onClick}
+            disabled={disabled}
+            className={className}
+        >
+            {content}
         </button>
     );
 }
@@ -182,8 +206,8 @@ function ConnectionCard({ connection }: { connection: Connection }) {
                 </div>
                 <span
                     className={`px-2 py-1 text-xs rounded-full ${connection.status === 'connected'
-                            ? 'bg-green-500/10 text-green-500'
-                            : 'bg-gray-500/10 text-gray-500'
+                        ? 'bg-green-500/10 text-green-500'
+                        : 'bg-gray-500/10 text-gray-500'
                         }`}
                 >
                     {connection.status}
@@ -286,16 +310,28 @@ function NewConnectionModal({
                         <label className="block text-sm font-medium mb-2">Database Type</label>
                         <select
                             value={formData.type}
-                            onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                            onChange={(e) => {
+                                const newType = e.target.value;
+                                const defaultPorts: { [key: string]: string } = {
+                                    postgresql: '5432',
+                                    mysql: '3306',
+                                    mariadb: '3306',
+                                    mongodb: '27017',
+                                    redis: '6379',
+                                };
+                                setFormData({
+                                    ...formData,
+                                    type: newType,
+                                    port: defaultPorts[newType] || formData.port
+                                });
+                            }}
                             className="w-full px-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                         >
                             <option value="postgresql">PostgreSQL</option>
-                            <option value="mysql" disabled>
-                                MySQL (Coming Soon)
-                            </option>
-                            <option value="mongodb" disabled>
-                                MongoDB (Coming Soon)
-                            </option>
+                            <option value="mysql">MySQL</option>
+                            <option value="mariadb">MariaDB</option>
+                            <option value="mongodb">MongoDB</option>
+                            <option value="redis">Redis</option>
                         </select>
                     </div>
 
