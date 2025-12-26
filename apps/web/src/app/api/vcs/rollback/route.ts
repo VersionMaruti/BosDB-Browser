@@ -56,7 +56,6 @@ export async function POST(request: NextRequest) {
         const currentCommit = commits[0];
         const revertMessage = `Revert to: ${targetCommit.message} (${targetCommit.id.substring(0, 8)})`;
 
-        // The snapshot from target commit becomes our new state
         const revertCommit = await vc.commit(
             revertMessage,
             { name: 'System', email: 'system@bosdb.com', timestamp: new Date() },
@@ -65,7 +64,7 @@ export async function POST(request: NextRequest) {
                 operation: 'REVERT' as any,
                 target: 'database',
                 description: `Reverted ${Math.abs(targetRevision || 0)} revision(s) back`
-            }],
+            }] as any[],
             targetCommit.snapshot || { schema: { tables: {} }, data: { tables: {} }, timestamp: new Date() }
         );
 
