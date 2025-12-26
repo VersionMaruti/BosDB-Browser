@@ -2,7 +2,6 @@
   "name": "bosdb",
   "version": "0.1.0",
   "private": true,
-  "description": "Production-grade web-based database management tool",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -11,25 +10,16 @@
     "dev": "npm run dev --workspace=apps/web",
     "dev:all": "turbo run dev",
     "build": "turbo run build",
-    "build:packages": "npm run build --workspaces --if-present",
-    "build:web": "npm run build --workspace=apps/web",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "clean": "turbo run clean && rm -rf node_modules",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "setup": "./setup.sh"
+    "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
-    "prettier": "^3.0.3",
     "turbo": "^1.10.16",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "prettier": "^3.0.3"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "dependencies": {
-    "@bosdb/db-adapters": "^0.1.0",
-    "@bosdb/security": "^0.1.0",
-    "@bosdb/utils": "^0.1.0"
   }
 }
