@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import { Commit, CommitOptions, SchemaSnapshot, DataSnapshot } from './Commit';
-import { Branch, CreateBranchOptions, BranchPointer } from './Branch';
+import { Commit, CommitOptions } from './Commit';
+import { Branch, CreateBranchOptions } from './Branch';
 import { StorageManager } from '../storage/StorageManager';
 import { Logger } from '@bosdb/utils';
 
@@ -221,7 +221,7 @@ export class DatabaseRepository {
         return crypto.createHash('sha256').update(content).digest('hex').substring(0, 40);
     }
 
-    private async createSchemaSnapshot(options: CommitOptions): Promise<string> {
+    private async createSchemaSnapshot(_options: CommitOptions): Promise<string> {
         // To be implemented: capture current schema
         // This will call the database adapter's createSnapshot method
         const snapshotId = `schema_${Date.now()}`;
@@ -229,7 +229,7 @@ export class DatabaseRepository {
         return snapshotId;
     }
 
-    private async createDataSnapshot(options: CommitOptions): Promise<string> {
+    private async createDataSnapshot(_options: CommitOptions): Promise<string> {
         // To be implemented: capture current data
         // This will be delta-based for efficiency
         const snapshotId = `data_${Date.now()}`;
