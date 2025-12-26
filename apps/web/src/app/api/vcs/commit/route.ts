@@ -24,13 +24,10 @@ export async function POST(request: NextRequest) {
         const vc = createVersionControl(connectionId, storage);
 
         // Check if initialized, if not initialize
-        let isInitialized = false;
         try {
             await vc.getHEAD();
-            isInitialized = true;
         } catch {
             await vc.initialize();
-            isInitialized = true;
         }
 
         // Ensure branches directory exists and main branch is created

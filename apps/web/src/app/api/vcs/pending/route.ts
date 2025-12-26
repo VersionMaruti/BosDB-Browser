@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
         // Store pending change
         const pendingChangesPath = path.join(vcsDir, 'pending.json');
 
-        let pending = { changes: [] };
+        let pending: { changes: any[] } = { changes: [] };
         try {
             const data = await fs.readFile(pendingChangesPath, 'utf-8');
             pending = JSON.parse(data);
