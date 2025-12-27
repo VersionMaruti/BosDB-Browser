@@ -6,6 +6,7 @@ import { login, getAllUsers, initializeDefaultUsers, registerUser } from '@/lib/
 
 export default function LoginPage() {
   const router = useRouter();
+  const users = getAllUsers(); // Moved to top
   const [userId, setUserId] = useState('');
   const [showRegister, setShowRegister] = useState(false);
   const [newUser, setNewUser] = useState({
@@ -18,7 +19,6 @@ export default function LoginPage() {
 
   useEffect(() => {
     // Initialize default user if needed
-    const users = getAllUsers();
     if (users.length === 0) {
       registerUser({
         id: 'admin',
@@ -28,7 +28,7 @@ export default function LoginPage() {
         status: 'approved'
       });
     }
-  }, []);
+  }, [users.length]);
 
   const handleLogin = () => {
     setError('');
