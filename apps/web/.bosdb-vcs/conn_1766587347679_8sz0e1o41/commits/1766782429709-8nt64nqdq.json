@@ -1,0 +1,22 @@
+{
+  "id": "1766782429709-8nt64nqdq",
+  "message": "Revert to: Revert to: CREATE operating_system (17667733) (17667735)",
+  "author": {
+    "name": "System",
+    "email": "system@bosdb.com",
+    "timestamp": "2025-12-26T20:53:49.708Z"
+  },
+  "timestamp": "2025-12-26T20:53:49.709Z",
+  "parentIds": [
+    "1766773619594-wj72bmmy6"
+  ],
+  "treeId": "1766782429709-8nt64nqdq",
+  "changes": [
+    {
+      "type": "DATA",
+      "operation": "REVERT",
+      "target": "database",
+      "description": "Reverted 1 revision(s) back"
+    }
+  ]
+}

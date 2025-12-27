@@ -24,13 +24,41 @@ function loadConnections(): Map<string, any> {
 // Save connections to file
 export function saveConnections() {
     try {
-        const obj = Object.fromEntries(connections);
+        const obj = Object.fromEntries(getConnections());
         fs.writeFileSync(STORAGE_FILE, JSON.stringify(obj, null, 2));
-        console.log(`[Store] Saved ${connections.size} connections to file`);
+        console.log(`[Store] Saved ${getConnections().size} connections to file`);
     } catch (error) {
         console.error('[Store] Failed to save connections:', error);
     }
 }
 
-export const connections = loadConnections();
-export const adapterInstances = new Map<string, any>();
+// Lazy initialization - only load when accessed
+let _connections: Map<string, any> | null = null;
+let _adapterInstances: Map<string, any> | null = null;
+
+export function getConnections(): Map<string, any> {
+    if (!_connections) {
+        _connections = loadConnections();
+    }
+    return _connections;
+}
+
+export function getAdapterInstances(): Map<string, any> {
+    if (!_adapterInstances) {
+        _adapterInstances = new Map();
+    }
+    return _adapterInstances;
+}
+
+// Legacy exports for compatibility - these now use lazy loading
+export const connections = new Proxy({} as Map<string, any>, {
+    get(_target, prop) {
+        return (getConnections() as any)[prop];
+    }
+});
+
+export const adapterInstances = new Proxy({} as Map<string, any>, {
+    get(_target, prop) {
+        return (getAdapterInstances() as any)[prop];
+    }
+});

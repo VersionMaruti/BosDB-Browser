@@ -499,8 +499,8 @@ export default function QueryPage() {
                             language="sql"
                             theme={theme === 'dark' ? 'vs-dark' : 'vs-light'}
                             value={query}
-                            onChange={(value) => setQuery(value || '')}
-                            onMount={(editor) => setEditorRef(editor)}
+                            onChange={(value: string | undefined) => setQuery(value || '')}
+                            onMount={(editor: any) => setEditorRef(editor)}
                             options={{
                                 minimap: { enabled: false },
                                 fontSize: 14,

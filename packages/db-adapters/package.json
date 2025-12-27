@@ -13,6 +13,7 @@
     },
     "dependencies": {
         "@bosdb/core": "*",
+        "@bosdb/utils": "*",
         "pg": "^8.11.3",
         "mysql2": "^3.6.0",
         "mongodb": "^6.3.0",
