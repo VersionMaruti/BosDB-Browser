@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 import { login, getAllUsers, initializeDefaultUsers, registerUser } from '@/lib/auth';
 
 // Define User type locally to resolve lint error or import it if exported
@@ -16,37 +18,58 @@ interface User {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [users, setUsers] = useState<User[]>([]); // Initialize empty for hydration stability
+  const [users, setUsers] = useState<User[]>([]);
   const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
   const [showRegister, setShowRegister] = useState(false);
   const [newUser, setNewUser] = useState({
     id: '',
     name: '',
     email: '',
+    password: '',
     role: 'user' as 'admin' | 'user'
   });
   const [error, setError] = useState('');
 
+  // Fetch users from server on mount
   useEffect(() => {
-    // Fetch users only on client side
-    const loadedUsers = getAllUsers();
-    setUsers(loadedUsers);
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch('/api/auth');
+        if (res.ok) {
+          const data = await res.json();
+          setUsers(data.users || []);
 
-    // Initialize default user if needed
-    if (loadedUsers.length === 0) {
-      registerUser({
-        id: 'admin',
-        name: 'Administrator',
-        email: 'admin@bosdb.com',
-        role: 'admin',
-        status: 'approved'
-      });
-      // Refresh list after registration
-      setUsers(getAllUsers());
-    }
+          // If no users exist on server, create default admin via API
+          if (data.users && data.users.length === 0) {
+            await fetch('/api/auth', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'register',
+                id: 'admin',
+                name: 'Administrator',
+                email: 'admin@bosdb.com',
+                password: 'Admin@123',
+                role: 'admin',
+                // Status handled by API logic for first user
+              })
+            });
+            // Refresh
+            const retry = await fetch('/api/auth');
+            const retryData = await retry.json();
+            setUsers(retryData.users || []);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch users', err);
+      }
+    };
+
+    fetchUsers();
   }, []);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setError('');
 
     if (!userId.trim()) {
@@ -54,36 +77,75 @@ export default function LoginPage() {
       return;
     }
 
-    const user = login(userId.trim());
+    if (!password.trim()) {
+      setError('Please enter your password');
+      return;
+    }
 
-    if (user) {
-      router.push('/dashboard');
-    } else {
-      setError('User not found. Contact admin to create your account.');
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'login',
+          userId: userId.trim(),
+          password: password
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        localStorage.setItem('bosdb_current_user', JSON.stringify(data.user));
+        router.push('/dashboard');
+      } else {
+        setError(data.error || 'Login failed');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Connection error');
     }
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     setError('');
 
     try {
-      registerUser({
-        ...newUser,
-        status: 'pending'
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'register',
+          ...newUser
+        })
       });
-      alert(`✅ User ${newUser.id} created successfully! (Pending Admin Approval)`);
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'Registration failed');
+
+      alert(`✅ User ${newUser.id} created successfully! ${users.length === 0 ? '(Approved as First Admin)' : '(Pending Admin Approval)'}`);
       setShowRegister(false);
-      setNewUser({ id: '', name: '', email: '', role: 'user' });
+      setNewUser({ id: '', name: '', email: '', password: '', role: 'user' });
+
+      // Refresh list
+      const listRes = await fetch('/api/auth');
+      const listData = await listRes.json();
+      setUsers(listData.users || []);
+
     } catch (err: any) {
       setError(err.message);
     }
   };
 
-
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-6">
       <div className="max-w-md w-full">
+        {/* Back to Home */}
+        <Link href="/" className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition mb-6">
+          <ArrowLeft className="w-4 h-4" />
+          Back to Home
+        </Link>
+
         {/* Logo */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">🗄️ BosDB</h1>
@@ -110,14 +172,28 @@ export default function LoginPage() {
                 value={userId}
                 onChange={(e) => setUserId(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                placeholder="e.g., ayush-g, yuval.o"
+                placeholder="e.g., admin"
+                className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                placeholder="Enter password"
                 className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
             </div>
 
             <button
               onClick={handleLogin}
-              className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition mb-4"
+              className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold rounded-lg transition mb-4"
             >
               Login
             </button>
@@ -126,23 +202,11 @@ export default function LoginPage() {
               onClick={() => setShowRegister(true)}
               className="w-full px-4 py-3 border border-gray-600 hover:bg-gray-700 text-gray-300 rounded-lg transition"
             >
-              Register New User (Admin)
+              Register New User
             </button>
-
-            {/* Existing Users */}
-            {users.length > 0 && (
-              <div className="mt-6 p-4 bg-gray-900 rounded-lg">
-                <p className="text-sm text-gray-400 mb-2">Existing Users:</p>
-                <div className="space-y-1">
-                  {users.map(user => (
-                    <div key={user.id} className="text-xs text-gray-500">
-                      • {user.id} ({user.role})
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
+
+
         ) : (
           // Register Form
           <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
@@ -163,7 +227,7 @@ export default function LoginPage() {
                   type="text"
                   value={newUser.id}
                   onChange={(e) => setNewUser({ ...newUser, id: e.target.value })}
-                  placeholder="e.g., ayush-g"
+                  placeholder="e.g., testuser"
                   className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white"
                 />
               </div>
@@ -176,7 +240,7 @@ export default function LoginPage() {
                   type="text"
                   value={newUser.name}
                   onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                  placeholder="e.g., Ayush Gupta"
+                  placeholder="e.g., Test User"
                   className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white"
                 />
               </div>
@@ -192,6 +256,20 @@ export default function LoginPage() {
                   placeholder="e.g., ayush@company.com"
                   className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Password *
+                </label>
+                <input
+                  type="password"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  placeholder="Min 8 chars, 1 upper, 1 lower, 1 number"
+                  className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white"
+                />
+                <p className="text-xs text-gray-500 mt-1">Must be 8+ characters with uppercase, lowercase, and number</p>
               </div>
 
               <div>
@@ -222,6 +300,24 @@ export default function LoginPage() {
             >
               Back to Login
             </button>
+          </div>
+        )}
+
+        {/* Existing Users - Outside the box */}
+        {users.length > 0 && (
+          <div className="mt-6 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+            <p className="text-sm text-gray-400 mb-2">Registered Users:</p>
+            <div className="flex flex-wrap gap-2">
+              {users.map(user => (
+                <span
+                  key={user.id}
+                  className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded cursor-pointer hover:bg-gray-600"
+                  onClick={() => { setUserId(user.id); setShowRegister(false); }}
+                >
+                  {user.id} <span className="text-gray-500">({user.role})</span>
+                </span>
+              ))}
+            </div>
           </div>
         )}
       </div>

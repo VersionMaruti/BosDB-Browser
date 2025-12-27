@@ -11,6 +11,7 @@ interface User {
     name: string;
     email: string;
     role: 'admin' | 'user';
+    status?: 'pending' | 'approved' | 'rejected';
     createdAt: string;
 }
 
@@ -69,6 +70,24 @@ export default function AdminPage() {
         }
     };
 
+    const handleStatusUpdate = async (userId: string, newStatus: string) => {
+        try {
+            const user = getCurrentUser();
+            await fetch('/api/admin/users', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-user-id': user?.id || '',
+                    'x-user-role': user?.role || ''
+                },
+                body: JSON.stringify({ userId, status: newStatus })
+            });
+            fetchData();
+        } catch (error) {
+            console.error('Failed to update status:', error);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-background">
             {/* Header */}
@@ -114,6 +133,7 @@ export default function AdminPage() {
                             <UserTable
                                 users={users.filter(u => u.role === 'admin')}
                                 onManageAccess={setAssigningUser}
+                                onStatusUpdate={handleStatusUpdate}
                             />
                         </section>
 
@@ -126,6 +146,7 @@ export default function AdminPage() {
                             <UserTable
                                 users={users.filter(u => u.role !== 'admin')}
                                 onManageAccess={setAssigningUser}
+                                onStatusUpdate={handleStatusUpdate}
                             />
                         </section>
                     </div>
@@ -155,7 +176,12 @@ export default function AdminPage() {
     );
 }
 
-function UserTable({ users, onManageAccess }: { users: User[], onManageAccess: (user: User) => void }) {
+// UserTable component with status support
+function UserTable({ users, onManageAccess, onStatusUpdate }: {
+    users: User[],
+    onManageAccess: (user: User) => void,
+    onStatusUpdate?: (userId: string, status: string) => void
+}) {
     if (users.length === 0) {
         return (
             <div className="bg-card border border-border rounded-lg p-8 text-center text-muted-foreground">
@@ -172,6 +198,7 @@ function UserTable({ users, onManageAccess }: { users: User[], onManageAccess: (
                         <th className="px-6 py-3">Name</th>
                         <th className="px-6 py-3">Email</th>
                         <th className="px-6 py-3">Role</th>
+                        <th className="px-6 py-3">Status</th>
                         <th className="px-6 py-3">Created</th>
                         <th className="px-6 py-3 text-right">Actions</th>
                     </tr>
@@ -189,10 +216,36 @@ function UserTable({ users, onManageAccess }: { users: User[], onManageAccess: (
                                     {user.role}
                                 </span>
                             </td>
+                            <td className="px-6 py-4">
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${user.status === 'pending' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' :
+                                    user.status === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                                        'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                                    }`}>
+                                    {user.status || 'approved'}
+                                </span>
+                            </td>
                             <td className="px-6 py-4 text-muted-foreground text-sm">
                                 {new Date(user.createdAt).toLocaleDateString()}
                             </td>
-                            <td className="px-6 py-4 text-right">
+                            <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
+                                {user.status === 'pending' && onStatusUpdate && (
+                                    <>
+                                        <button
+                                            onClick={() => onStatusUpdate(user.id, 'approved')}
+                                            className="p-1 text-green-600 hover:bg-green-100 rounded"
+                                            title="Approve"
+                                        >
+                                            <Check className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={() => onStatusUpdate(user.id, 'rejected')}
+                                            className="p-1 text-red-600 hover:bg-red-100 rounded"
+                                            title="Reject"
+                                        >
+                                            <AlertCircle className="w-4 h-4" /> {/* Using AlertCircle as pseudo-X or Reject icon */}
+                                        </button>
+                                    </>
+                                )}
                                 <button
                                     onClick={() => onManageAccess(user)}
                                     className="text-primary hover:text-primary/80 text-sm font-medium"
@@ -387,9 +440,70 @@ function ConnectionRow({
     const isShared = connection.sharedWith?.includes(userId) ?? false;
     const hasAccess = isOwner || isShared;
     const [loading, setLoading] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+    const [permissions, setPermissions] = useState({
+        canRead: hasAccess,
+        canEdit: false,
+        canCommit: false,
+        canManageSchema: false
+    });
 
-    const toggleAccess = async () => {
-        if (isOwner) return; // Cannot revoke owner access here
+    // Fetch current permissions when expanded
+    useEffect(() => {
+        if (expanded && hasAccess) {
+            fetchPermissions();
+        }
+    }, [expanded]);
+
+    const fetchPermissions = async () => {
+        try {
+            const res = await fetch(`/api/admin/assign?userId=${userId}&connectionId=${connection.id}`);
+            const data = await res.json();
+            if (data.permission) {
+                setPermissions(data.permission);
+            }
+        } catch (err) {
+            console.error('Failed to fetch permissions:', err);
+        }
+    };
+
+    const updatePermission = async (perm: string, value: boolean) => {
+        setLoading(true);
+        try {
+            const currentUser = getCurrentUser();
+            const newPerms = { ...permissions, [perm]: value };
+
+            // If enabling edit/commit/schema, also enable read
+            if (value && perm !== 'canRead') {
+                newPerms.canRead = true;
+            }
+
+            setPermissions(newPerms);
+
+            await fetch('/api/admin/assign', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-user-id': currentUser?.id || '',
+                    'x-user-role': currentUser?.role || ''
+                },
+                body: JSON.stringify({
+                    userId,
+                    connectionId: connection.id,
+                    action: 'update',
+                    permissions: newPerms
+                })
+            });
+            onUpdate();
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const revokeAccess = async () => {
+        if (!confirm('Remove all access for this user to this connection?')) return;
 
         setLoading(true);
         try {
@@ -404,9 +518,37 @@ function ConnectionRow({
                 body: JSON.stringify({
                     userId,
                     connectionId: connection.id,
-                    action: isShared ? 'unassign' : 'assign' // Toggle
+                    action: 'revoke'
                 })
             });
+            setExpanded(false);
+            onUpdate();
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const assignAccess = async () => {
+        setLoading(true);
+        try {
+            const currentUser = getCurrentUser();
+            await fetch('/api/admin/assign', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-user-id': currentUser?.id || '',
+                    'x-user-role': currentUser?.role || ''
+                },
+                body: JSON.stringify({
+                    userId,
+                    connectionId: connection.id,
+                    action: 'assign'
+                })
+            });
+            setPermissions({ canRead: true, canEdit: false, canCommit: false, canManageSchema: false });
+            setExpanded(true);
             onUpdate();
         } catch (err) {
             console.error(err);
@@ -416,35 +558,93 @@ function ConnectionRow({
     };
 
     return (
-        <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-background hover:border-primary/50 transition">
-            <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary/10 rounded items-center justify-center flex">
-                    <Database className="w-4 h-4 text-primary" />
+        <div className={`border border-border rounded-lg bg-background transition ${hasAccess ? 'border-green-200 dark:border-green-900' : ''}`}>
+            <div className="flex items-center justify-between p-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-primary/10 rounded items-center justify-center flex">
+                        <Database className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                        <h4 className="font-medium">{connection.name}</h4>
+                        <p className="text-xs text-muted-foreground capitalize">{connection.type} • {connection.host}</p>
+                    </div>
                 </div>
-                <div>
-                    <h4 className="font-medium">{connection.name}</h4>
-                    <p className="text-xs text-muted-foreground capitalize">{connection.type} • {connection.host}</p>
-                </div>
+
+                {isOwner ? (
+                    <span className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">Owner</span>
+                ) : hasAccess ? (
+                    <button
+                        onClick={() => setExpanded(!expanded)}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-2 bg-green-100 text-green-700 hover:bg-green-200"
+                    >
+                        <Check className="w-3 h-3" />
+                        {expanded ? 'Hide Permissions' : 'Edit Permissions'}
+                    </button>
+                ) : (
+                    <button
+                        onClick={assignAccess}
+                        disabled={loading}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium transition bg-muted text-muted-foreground hover:bg-muted/80"
+                    >
+                        {loading ? '...' : 'Grant Access'}
+                    </button>
+                )}
             </div>
 
-            {isOwner ? (
-                <span className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">Owner</span>
-            ) : (
-                <button
-                    onClick={toggleAccess}
-                    disabled={loading}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition flex items-center gap-2 ${hasAccess
-                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                        : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                        }`}
-                >
-                    {loading ? '...' : hasAccess ? (
-                        <>
-                            <Check className="w-3 h-3" />
-                            Assigned
-                        </>
-                    ) : 'Assign'}
-                </button>
+            {/* Permission Checkboxes */}
+            {expanded && hasAccess && !isOwner && (
+                <div className="px-4 pb-4 pt-2 border-t border-border">
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={permissions.canRead}
+                                onChange={(e) => updatePermission('canRead', e.target.checked)}
+                                disabled={loading}
+                                className="w-4 h-4 rounded border-border"
+                            />
+                            <span>📖 Read Data</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={permissions.canEdit}
+                                onChange={(e) => updatePermission('canEdit', e.target.checked)}
+                                disabled={loading}
+                                className="w-4 h-4 rounded border-border"
+                            />
+                            <span>✏️ Edit Data</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={permissions.canCommit}
+                                onChange={(e) => updatePermission('canCommit', e.target.checked)}
+                                disabled={loading}
+                                className="w-4 h-4 rounded border-border"
+                            />
+                            <span>📝 Commit Changes</span>
+                        </label>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={permissions.canManageSchema}
+                                onChange={(e) => updatePermission('canManageSchema', e.target.checked)}
+                                disabled={loading}
+                                className="w-4 h-4 rounded border-border"
+                            />
+                            <span>🏗️ Manage Schema</span>
+                        </label>
+                    </div>
+                    <button
+                        onClick={revokeAccess}
+                        disabled={loading}
+                        className="w-full px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition flex items-center justify-center gap-2"
+                    >
+                        <AlertCircle className="w-4 h-4" />
+                        Revoke All Access
+                    </button>
+                </div>
             )}
         </div>
     );

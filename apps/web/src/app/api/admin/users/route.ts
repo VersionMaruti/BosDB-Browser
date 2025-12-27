@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
             email,
             password, // In real app, hash this!
             role: role as 'admin' | 'user',
-            status: 'approved', // Admin-created users are auto-approved
+            status: 'approved' as const, // Admin-created users are auto-approved
             createdAt: new Date()
         };
 

@@ -73,3 +73,49 @@ export function extractTableName(query: string): string | null {
     }
     return null;
 }
+
+export interface ColumnDef {
+    name: string;
+    type: string; // e.g., 'VARCHAR', 'INTEGER', 'BOOLEAN'
+    isPrimaryKey: boolean;
+    isNullable: boolean;
+    defaultValue?: string;
+}
+
+export interface TableDef {
+    name: string;
+    columns: ColumnDef[];
+}
+
+export function generateCreateTableSQL(tableDef: TableDef, schema: string = 'public'): string {
+    if (!tableDef.name) throw new Error('Table name is required');
+    if (!tableDef.columns || tableDef.columns.length === 0) throw new Error('At least one column is required');
+
+    const columnDefinitions = tableDef.columns.map(col => {
+        const parts = [`"${col.name}"`, col.type];
+
+        if (col.isPrimaryKey) {
+            parts.push('PRIMARY KEY');
+        }
+
+        if (!col.isNullable && !col.isPrimaryKey) {
+            parts.push('NOT NULL');
+        }
+
+        if (col.defaultValue) {
+            // Basic heuristic for default value quoting
+            const isNumber = !isNaN(Number(col.defaultValue));
+            const isFunction = col.defaultValue.toUpperCase().endsWith('()'); // e.g., NOW()
+
+            if (isNumber || isFunction) {
+                parts.push(`DEFAULT ${col.defaultValue}`);
+            } else {
+                parts.push(`DEFAULT '${col.defaultValue.replace(/'/g, "''")}'`);
+            }
+        }
+
+        return parts.join(' ');
+    });
+
+    return `CREATE TABLE "${schema}"."${tableDef.name}" (\n    ${columnDefinitions.join(',\n    ')}\n);`;
+}

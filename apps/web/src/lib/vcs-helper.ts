@@ -29,6 +29,28 @@ export async function trackChange(connectionId: string, change: DatabaseChange):
 }
 
 /**
+ * Track a schema change (CREATE, ALTER, DROP table)
+ */
+export async function trackSchemaChange(
+    connectionId: string,
+    operation: 'create' | 'alter' | 'drop',
+    tableName: string,
+    sql: string,
+    author: { id: string; name: string }
+): Promise<void> {
+    const change: DatabaseChange = {
+        type: 'SCHEMA',
+        operation: operation.toUpperCase() as 'CREATE' | 'ALTER' | 'DROP',
+        target: tableName,
+        tableName,
+        description: `${operation.charAt(0).toUpperCase() + operation.slice(1)} table ${tableName} by ${author.name}`,
+        query: sql
+    };
+
+    await trackChange(connectionId, change);
+}
+
+/**
  * Parse SQL query to detect change type
  */
 export function parseQueryForChanges(query: string, affectedRows?: number): DatabaseChange | null {

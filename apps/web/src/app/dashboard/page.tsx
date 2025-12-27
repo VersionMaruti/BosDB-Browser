@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, Plus, Play, History, Save, LogOut, User, Shield } from 'lucide-react';
+import { Database, Plus, Play, History, Save, LogOut, User, Shield, Zap, Star } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getCurrentUser, logout } from '@/lib/auth';
+import { isPro, isTrial, fetchSystemSubscription } from '@/lib/subscription';
 
 interface Connection {
     id: string;
@@ -23,6 +24,7 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
     const [showNewConnection, setShowNewConnection] = useState(false);
     const [currentUser, setCurrentUser] = useState<ReturnType<typeof getCurrentUser>>(null);
+    const [subscriptionStatus, setSubscriptionStatus] = useState({ isPro: false, isTrial: false });
 
     useEffect(() => {
         // Check if user is logged in
@@ -32,6 +34,11 @@ export default function DashboardPage() {
             return;
         }
         setCurrentUser(user);
+
+        // Fetch system subscription status
+        fetchSystemSubscription().then(status => {
+            setSubscriptionStatus(status);
+        });
     }, [router]);
 
     useEffect(() => {
@@ -85,6 +92,22 @@ export default function DashboardPage() {
                                         Admin Panel
                                     </button>
                                 </Link>
+                            )}\n                            {!subscriptionStatus.isPro && (
+                                <Link href="/pricing">
+                                    <button className="px-4 py-2 text-sm font-medium text-purple-400 hover:text-purple-300 transition flex items-center gap-1">
+                                        <Zap className="w-4 h-4" />
+                                        Upgrade to Pro
+                                    </button>
+                                </Link>
+                            )}
+                            {subscriptionStatus.isPro && (
+                                <span className={`px-3 py-1 text-xs font-medium rounded-full flex items-center gap-1 ${subscriptionStatus.isTrial
+                                        ? 'bg-gradient-to-r from-green-500/20 to-teal-500/20 text-green-400'
+                                        : 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-400'
+                                    }`}>
+                                    <Star className="w-3 h-3" />
+                                    {subscriptionStatus.isTrial ? 'Trial' : 'Pro'}
+                                </span>
                             )}
                             <button
                                 onClick={() => {

@@ -1,15 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Editor from '@monaco-editor/react';
 import { useTheme } from 'next-themes';
-import { Play, Save, Download, Clock, Table as TableIcon, Database, ChevronRight, ChevronDown, GitBranch } from 'lucide-react';
+import { Play, Save, Download, Clock, Table as TableIcon, Database, ChevronRight, ChevronDown, GitBranch, Plus as PlusIcon } from 'lucide-react';
 import Link from 'next/link';
 import { trackChange, parseQueryForChanges, getPendingChanges } from '@/lib/vcs-helper';
 import { extractTableName } from '@/lib/sql-helper';
+import TableDesigner from '@/components/schema/TableDesigner';
 import { DataEditor } from '@/components/DataEditor';
 
+// Define QueryResult interface
 interface QueryResult {
     success: boolean;
     rows: any[];
@@ -158,7 +160,7 @@ function validateQuerySyntax(query: string, dbType: string): string {
     return `⚠️ Syntax Warnings:\n${warnings.map((w, i) => `${i + 1}. ${w}`).join('\n')}`;
 }
 
-export default function QueryPage() {
+function QueryPageContent() {
     const searchParams = useSearchParams();
     const connectionId = searchParams?.get('connection');
     const { theme } = useTheme();
@@ -174,6 +176,7 @@ export default function QueryPage() {
     const [schemaTables, setSchemaTables] = useState<Map<string, TableInfo[]>>(new Map());
     const [pendingChanges, setPendingChanges] = useState<number>(0);
     const [editorRef, setEditorRef] = useState<any>(null);
+    const [showTableDesigner, setShowTableDesigner] = useState(false);
 
 
 
@@ -363,10 +366,19 @@ export default function QueryPage() {
             <div className="flex-1 flex">
                 {/* Sidebar - Schema Explorer */}
                 <aside className="w-64 border-r border-border p-4 overflow-y-auto">
-                    <h3 className="font-semibold mb-4 flex items-center gap-2">
-                        <TableIcon className="w-4 h-4" />
-                        Database Explorer
-                    </h3>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-semibold flex items-center gap-2">
+                            <TableIcon className="w-4 h-4" />
+                            Database Explorer
+                        </h3>
+                        <button
+                            onClick={() => setShowTableDesigner(true)}
+                            className="p-1 hover:bg-accent rounded text-primary"
+                            title="Create New Table"
+                        >
+                            <PlusIcon className="w-4 h-4" />
+                        </button>
+                    </div>
                     <div className="space-y-1">
                         {schemas.length === 0 ? (
                             <p className="text-sm text-muted-foreground">No schemas found</p>
@@ -544,7 +556,7 @@ export default function QueryPage() {
                                         <DataEditor
                                             rows={result.rows}
                                             fields={result.fields}
-                                            onSave={async (updates) => {
+                                            onSave={async (updates: Array<{ rowIndex: number; field: string; oldValue: any; newValue: any }>) => {
                                                 try {
                                                     const res = await fetch('/api/data/update', {
                                                         method: 'POST',
@@ -592,6 +604,26 @@ export default function QueryPage() {
                     </div>
                 </div>
             </div>
+            {/* Table Designer Modal */}
+            {showTableDesigner && connectionId && (
+                <TableDesigner
+                    connectionId={connectionId}
+                    onClose={() => setShowTableDesigner(false)}
+                    onSuccess={() => {
+                        setShowTableDesigner(false);
+                        fetchSchemas(); // Refresh schema list
+                    }}
+                />
+            )}
         </div>
+    );
+}
+
+// Wrapper with Suspense for useSearchParams
+export default function QueryPage() {
+    return (
+        <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center">Loading...</div>}>
+            <QueryPageContent />
+        </Suspense>
     );
 }

@@ -1,4 +1,22 @@
 // User authentication and management
+
+// Granular permissions for each connection
+export interface ConnectionPermission {
+    connectionId: string;
+    canRead: boolean;       // View data (SELECT)
+    canEdit: boolean;       // Modify data (INSERT, UPDATE, DELETE)
+    canCommit: boolean;     // Access version control / commit changes
+    canManageSchema: boolean; // CREATE, ALTER, DROP tables
+}
+
+// Subscription plan
+export interface Subscription {
+    plan: 'free' | 'pro';
+    isTrial?: boolean; // true if it's a free trial
+    activatedAt?: Date;
+    expiresAt?: Date | null; // null = lifetime
+}
+
 export interface User {
     id: string;          // e.g., "ayush-g", "yuval.o"
     name: string;        // Full name
@@ -6,11 +24,52 @@ export interface User {
     password?: string; // Optional for now to support existing users, but required for new ones
     role: 'admin' | 'user';
     status: 'pending' | 'approved' | 'rejected';
+    permissions?: ConnectionPermission[]; // Granular permissions per connection
+    subscription?: Subscription; // Pro subscription
     createdAt: Date;
 }
 
 const USERS_STORAGE_KEY = 'bosdb_users';
 const CURRENT_USER_KEY = 'bosdb_current_user';
+
+// Password utilities
+const SALT_ROUNDS = 10;
+
+/**
+ * Hash a password using bcrypt
+ */
+export async function hashPassword(password: string): Promise<string> {
+    // Dynamic import for client-side compatibility
+    const bcrypt = await import('bcrypt');
+    return await bcrypt.hash(password, SALT_ROUNDS);
+}
+
+/**
+ * Verify a password against its hash
+ */
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+    const bcrypt = await import('bcrypt');
+    return await bcrypt.compare(password, hash);
+}
+
+/**
+ * Validate password strength
+ */
+export function validatePassword(password: string): { valid: boolean; error?: string } {
+    if (!password || password.length < 8) {
+        return { valid: false, error: 'Password must be at least 8 characters' };
+    }
+    if (!/[A-Z]/.test(password)) {
+        return { valid: false, error: 'Password must contain an uppercase letter' };
+    }
+    if (!/[a-z]/.test(password)) {
+        return { valid: false, error: 'Password must contain a lowercase letter' };
+    }
+    if (!/[0-9]/.test(password)) {
+        return { valid: false, error: 'Password must contain a number' };
+    }
+    return { valid: true };
+}
 
 // Get all users
 export function getAllUsers(): User[] {
@@ -32,7 +91,9 @@ export function login(userId: string): User | null {
     const user = users.find(u => u.id === userId);
 
     if (user) {
-        if (user.status !== 'approved') {
+        // Only block if explicitly pending or rejected
+        // If status is undefined (legacy user), allow access
+        if (user.status === 'pending' || user.status === 'rejected') {
             throw new Error(user.status === 'pending'
                 ? 'Your account is pending admin approval.'
                 : 'Your account has been rejected.');
@@ -55,7 +116,7 @@ export function registerUser(user: Omit<User, 'createdAt'>): void {
 
     const newUser: User = {
         ...user,
-        status: 'pending', // Default to pending
+        status: user.status || 'pending', // Use provided status or default to pending
         createdAt: new Date(),
     };
 

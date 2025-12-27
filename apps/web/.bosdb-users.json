@@ -4,23 +4,85 @@
     "name": "Administrator",
     "email": "admin@bosdb.com",
     "role": "admin",
-    "createdAt": "2025-12-27T09:49:18.394Z",
-    "password": "admin"
+    "status": "approved",
+    "createdAt": "2025-12-27T11:03:19.725Z",
+    "password": "admin",
+    "permissions": [
+      {
+        "connectionId": "conn_1766587347679_8sz0e1o41",
+        "canRead": true,
+        "canEdit": false,
+        "canCommit": false,
+        "canManageSchema": false
+      },
+      {
+        "connectionId": "conn_1766590009114_ln7oo0gvc",
+        "canRead": true,
+        "canEdit": false,
+        "canCommit": false,
+        "canManageSchema": false
+      }
+    ],
+    "subscription": {
+      "plan": "pro",
+      "isTrial": false,
+      "activatedAt": "2025-12-27T11:39:13.686Z",
+      "expiresAt": "2026-12-27T11:39:13.686Z"
+    }
   },
   {
-    "id": "arush",
-    "name": "arusg",
-    "email": "arush@gmail.com",
-    "password": "ff",
-    "role": "user",
-    "createdAt": "2025-12-27T09:49:18.394Z"
-  },
-  {
-    "id": "arushi",
-    "name": "yy",
-    "email": "arushi@gmail.com",
-    "password": "y",
+    "id": "ayush-g",
+    "name": "Ladies Tailor",
+    "email": "LT@gmail.com",
     "role": "admin",
-    "createdAt": "2025-12-27T09:52:39.455Z"
+    "password": "$2b$10$YmZ8Caktt9Vx6d0MG06Ag.bJnDtORQeW.59F/jBYkaZHTFYzPrazK",
+    "status": "approved",
+    "createdAt": "2025-12-27T11:03:19.725Z"
+  },
+  {
+    "id": "asdf",
+    "name": "asdf",
+    "email": "asdf@gmail.com",
+    "password": "Asdf098!",
+    "role": "user",
+    "status": "approved",
+    "createdAt": "2025-12-27T11:13:00.213Z",
+    "subscription": {
+      "plan": "pro",
+      "activatedAt": "2025-12-27T11:16:40.643Z",
+      "expiresAt": "2026-12-27T11:16:40.642Z"
+    },
+    "permissions": [
+      {
+        "connectionId": "conn_1766590009114_ln7oo0gvc",
+        "canRead": true,
+        "canEdit": false,
+        "canCommit": false,
+        "canManageSchema": false
+      }
+    ]
+  },
+  {
+    "id": "yuval",
+    "name": "yuval",
+    "email": "yuval@gmail.com",
+    "password": "Arush098!",
+    "role": "user",
+    "status": "approved",
+    "createdAt": "2025-12-27T11:14:01.587Z",
+    "subscription": {
+      "plan": "pro",
+      "activatedAt": "2025-12-27T11:29:58.866Z",
+      "expiresAt": "2026-01-26T11:29:58.866Z"
+    }
+  },
+  {
+    "id": "qw",
+    "name": "qw",
+    "email": "qw@gmail.com",
+    "role": "user",
+    "password": "$2b$10$.AZc2fUtbM0fyRRtUjM//u9.cbejvQC3afTPGoLzazc8enLpfQg8C",
+    "status": "approved",
+    "createdAt": "2025-12-27T11:32:58.640Z"
   }
 ]
