@@ -82,7 +82,7 @@ function getConnectionString(db: any): string {
         case 'mysql':
             return `mysql://${db.username}:${db.password}@localhost:${db.port}/${db.database}`;
         case 'mongodb':
-            return `mongodb://${db.username}:${db.password}@localhost:${db.port}/${db.database}`;
+            return `mongodb://${db.username}:${db.password}@localhost:${db.port}/${db.database}?authSource=admin`;
         case 'redis':
             return `redis://localhost:${db.port}`;
         default:

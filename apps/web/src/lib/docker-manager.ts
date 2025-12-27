@@ -317,8 +317,13 @@ async function waitForContainer(container: Docker.Container, timeoutMs: number):
     while (Date.now() - startTime < timeoutMs) {
         const info = await container.inspect();
         if (info.State.Running) {
-            // Give it a bit more time to initialize
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Get container name to detect MongoDB
+            const containerName = info.Name || '';
+            const isMongoDB = containerName.includes('mongodb');
+            
+            // MongoDB needs more time to initialize external connections
+            const waitTime = isMongoDB ? 8000 : 2000;
+            await new Promise(resolve => setTimeout(resolve, waitTime));
             return;
         }
         await new Promise(resolve => setTimeout(resolve, 500));

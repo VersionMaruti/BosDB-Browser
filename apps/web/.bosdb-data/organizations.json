@@ -113,5 +113,17 @@
     },
     "createdAt": "2025-12-27T18:44:01.919Z",
     "updatedAt": "2025-12-27T18:44:01.919Z"
+  },
+  {
+    "id": "ind-system",
+    "name": "system's Workspace",
+    "type": "individual",
+    "adminUserId": "system",
+    "subscription": {
+      "plan": "free",
+      "isTrial": false
+    },
+    "createdAt": "2025-12-27T19:55:56.114Z",
+    "updatedAt": "2025-12-27T19:55:56.114Z"
   }
 ]

@@ -2,7 +2,7 @@
 const nextConfig = {
     reactStrictMode: false,
     output: 'standalone', // For Docker deployment
-    transpilePackages: ['@bosdb/core', '@bosdb/db-adapters', '@bosdb/security', '@bosdb/utils'],
+    transpilePackages: ['@bosdb/core', '@bosdb/db-adapters', '@bosdb/security', '@bosdb/utils', '@bosdb/version-control'],
     serverExternalPackages: [
         'pg',
         'mysql2',
