@@ -1,6 +1,0 @@
-{
-    "buildCommand": "turbo run build --filter=@bosdb/web...",
-    "installCommand": "npm install",
-    "framework": "nextjs",
-    "outputDirectory": "apps/web/.next"
-}
