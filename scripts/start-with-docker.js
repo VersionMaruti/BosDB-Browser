@@ -4,6 +4,9 @@ const { exec, spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 
+// MongoDB connection string (same as in db.ts)
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://bosdb:vY0xUQxLuOzNzHv3@bosdb.mvxsw5l.mongodb.net/bosdb?appName=BosDB';
+
 console.log('🚀 Starting BosDB with Docker...\n');
 
 /**
@@ -131,6 +134,33 @@ function startDevServer() {
 }
 
 /**
+ * Check MongoDB connection
+ */
+async function checkMongoDB() {
+    return new Promise((resolve) => {
+        const mongoose = require('mongoose');
+
+        console.log('🔌 Connecting to MongoDB Atlas...');
+
+        mongoose.connect(MONGODB_URI, {
+            serverSelectionTimeoutMS: 10000,
+            socketTimeoutMS: 45000,
+            family: 4,
+        })
+            .then(() => {
+                console.log('✅ MongoDB Atlas connected!\n');
+                mongoose.disconnect(); // Disconnect after test (Next.js will reconnect)
+                resolve(true);
+            })
+            .catch((err) => {
+                console.log('⚠️  MongoDB connection failed:', err.message);
+                console.log('   App will still start, but database features may not work.\n');
+                resolve(false);
+            });
+    });
+}
+
+/**
  * Main execution
  */
 async function main() {
@@ -159,6 +189,9 @@ async function main() {
                 process.exit(1);
             }
         }
+
+        // Check MongoDB connection
+        await checkMongoDB();
 
         // Start the dev server
         startDevServer();
