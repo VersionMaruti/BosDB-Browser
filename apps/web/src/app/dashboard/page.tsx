@@ -97,7 +97,7 @@ export default function DashboardPage() {
                                     Settings
                                 </button>
                             </Link>
-                            {currentUser?.role === 'admin' && (
+                            {currentUser?.role === 'admin' && currentUser?.accountType === 'enterprise' && (
                                 <Link href="/admin">
                                     <button className="px-4 py-2 text-sm font-medium text-primary hover:text-primary/80 transition flex items-center gap-1">
                                         <Shield className="w-4 h-4" />

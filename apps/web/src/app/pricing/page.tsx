@@ -5,12 +5,13 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Check, X, Zap, ArrowLeft, CreditCard, Shield, Star, Loader2, Lock, Landmark } from 'lucide-react';
 import { getCurrentUser } from '@/lib/auth';
-import { fetchOrgSubscription, PRICING, isValidCoupon, calculateDiscountedPrice } from '@/lib/subscription';
+import { fetchOrgSubscription, PRICING, isValidCoupon, calculateDiscountedPrice, COUPONS } from '@/lib/subscription';
 
 export default function PricingPage() {
     const router = useRouter();
+    const [viewMode, setViewMode] = useState<'individual' | 'enterprise'>('individual');
     const [showPayment, setShowPayment] = useState(false);
-    const [selectedPlan, setSelectedPlan] = useState<'pro_monthly' | 'pro_yearly' | 'pro_trial'>('pro_monthly');
+    const [selectedPlan, setSelectedPlan] = useState<'pro_monthly' | 'pro_yearly' | 'pro_trial' | 'enterprise_monthly' | 'enterprise_yearly'>('pro_monthly');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [cardNumber, setCardNumber] = useState('');
@@ -39,9 +40,28 @@ export default function PricingPage() {
 
     const systemIsPro = subscriptionStatus.isPro;
     const planType = subscriptionStatus.planType;
+    const handleApplyCoupon = () => {
+        if (isValidCoupon(coupon, selectedPlan)) {
+            setAppliedCoupon(coupon);
+            // Calculate discount based on the new logic in subscription.ts
+            const originalPrice = (PRICING as any)[selectedPlan].price;
+            const finalPrice = calculateDiscountedPrice(originalPrice, coupon, selectedPlan);
+            const discountPercent = ((originalPrice - finalPrice) / originalPrice) * 100;
+            setDiscount(discountPercent);
+            setError('');
+        } else {
+            const couponData = (COUPONS as any)[coupon];
+            if (couponData && couponData.allowed_plans && !couponData.allowed_plans.includes(selectedPlan)) {
+                setError(`This coupon is only valid for the ${couponData.allowed_plans[0].replace('pro_', '')} plan`);
+            } else {
+                setError('Invalid coupon code');
+            }
+            setAppliedCoupon('');
+            setDiscount(0);
+        }
+    };
 
-
-    const handleUpgrade = (plan: 'pro_monthly' | 'pro_yearly' | 'pro_trial') => {
+    const handleUpgrade = (plan: 'pro_monthly' | 'pro_yearly' | 'pro_trial' | 'enterprise_monthly' | 'enterprise_yearly') => {
         if (!user) {
             router.push('/login');
             return;
@@ -52,20 +72,6 @@ export default function PricingPage() {
             handleFreeTrial();
         } else {
             setShowPayment(true);
-        }
-    };
-
-    const handleApplyCoupon = () => {
-        if (isValidCoupon(coupon)) {
-            setAppliedCoupon(coupon);
-            // In a real app, we'd fetch discount from server. Here we assume 100% for omnigang100
-            if (coupon === 'omnigang100') {
-                setDiscount(100);
-            }
-        } else {
-            setError('Invalid coupon code');
-            setAppliedCoupon('');
-            setDiscount(0);
         }
     };
 
@@ -141,6 +147,10 @@ export default function PricingPage() {
             const data = await res.json();
             if (res.ok && data.success) {
                 setIsPaid(true);
+                // Refresh subscription status
+                if (user?.organizationId) {
+                    fetchOrgSubscription(user.organizationId);
+                }
                 // Redirect after a small delay to show success
                 setTimeout(() => {
                     router.push('/dashboard');
@@ -197,82 +207,131 @@ export default function PricingPage() {
                     )}
                 </div>
 
+                {/* Toggle */}
+                <div className="flex justify-center mb-12">
+                    <div className="bg-white/10 p-1 rounded-xl flex">
+                        <button
+                            onClick={() => setViewMode('individual')}
+                            className={`px-6 py-2 rounded-lg text-sm font-semibold transition ${viewMode === 'individual' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                        >
+                            Individual
+                        </button>
+                        <button
+                            onClick={() => setViewMode('enterprise')}
+                            className={`px-6 py-2 rounded-lg text-sm font-semibold transition ${viewMode === 'enterprise' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'}`}
+                        >
+                            Enterprise
+                        </button>
+                    </div>
+                </div>
+
                 {/* Pricing Cards */}
                 <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto mb-16">
-                    {/* Free Plan */}
-                    <div className="bg-white/5 backdrop-blur-lg rounded-2xl p-8 border border-white/10">
-                        <h3 className="text-xl font-bold text-white mb-2">Free</h3>
-                        <div className="text-4xl font-bold text-white mb-1">$0</div>
-                        <p className="text-gray-400 mb-6">Forever free</p>
+                    {/* Free Plan (Always visible or specific to Individual?) Let's keep it visible for Individual */}
+                    {viewMode === 'individual' && (
+                        <div className="bg-white/5 backdrop-blur-lg rounded-2xl p-8 border border-white/10">
+                            <h3 className="text-xl font-bold text-white mb-2">Free</h3>
+                            <div className="text-4xl font-bold text-white mb-1">$0</div>
+                            <p className="text-gray-400 mb-6">Forever free</p>
 
-                        <ul className="space-y-3 mb-8">
-                            {PRICING.free.features.map((f, i) => (
-                                <li key={i} className="flex items-center gap-2 text-gray-300">
-                                    <Check className="w-4 h-4 text-green-400" />
-                                    {f}
+                            <ul className="space-y-3 mb-8">
+                                {PRICING.free.features.map((f, i) => (
+                                    <li key={i} className="flex items-center gap-2 text-gray-300">
+                                        <Check className="w-4 h-4 text-green-400" />
+                                        {f}
+                                    </li>
+                                ))}
+                                <li className="flex items-center gap-2 text-gray-500">
+                                    <X className="w-4 h-4 text-red-400" />
+                                    Version Control
                                 </li>
-                            ))}
-                            <li className="flex items-center gap-2 text-gray-500">
-                                <X className="w-4 h-4 text-red-400" />
-                                Version Control
-                            </li>
-                            <li className="flex items-center gap-2 text-gray-500">
-                                <X className="w-4 h-4 text-red-400" />
-                                Table Designer
-                            </li>
-                        </ul>
+                                <li className="flex items-center gap-2 text-gray-500">
+                                    <X className="w-4 h-4 text-red-400" />
+                                    Table Designer
+                                </li>
+                            </ul>
 
-                        <button
-                            disabled
-                            className="w-full py-3 bg-gray-700 text-gray-400 rounded-lg cursor-not-allowed"
-                        >
-                            Current Plan
-                        </button>
-                        <button
-                            onClick={() => handleUpgrade('pro_trial')}
-                            disabled={systemIsPro || loading}
-                            className="w-full py-2 mt-2 text-sm text-purple-400 hover:text-purple-300 transition disabled:opacity-50"
-                        >
-                            {loading ? 'Activating...' : '🎁 Start 1 Month Free Trial'}
-                        </button>
-                    </div>
+                            <button
+                                disabled
+                                className="w-full py-3 bg-gray-700 text-gray-400 rounded-lg cursor-not-allowed"
+                            >
+                                Current Plan
+                            </button>
+                            <button
+                                onClick={() => handleUpgrade('pro_trial')}
+                                disabled={systemIsPro || loading}
+                                className="w-full py-2 mt-2 text-sm text-purple-400 hover:text-purple-300 transition disabled:opacity-50"
+                            >
+                                {loading ? 'Activating...' : '🎁 Start 1 Month Free Trial'}
+                            </button>
+                        </div>
+                    )}
 
-                    {/* Pro Monthly */}
-                    <div className="bg-gradient-to-b from-purple-500/20 to-pink-500/20 backdrop-blur-lg rounded-2xl p-8 border-2 border-purple-500/50 relative">
-                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-purple-500 text-white text-xs font-bold rounded-full">
+                    {viewMode === 'enterprise' && (
+                        <div className="bg-white/5 backdrop-blur-lg rounded-2xl p-8 border border-white/10">
+                            <h3 className="text-xl font-bold text-white mb-2">Pro Team</h3>
+                            <div className="text-4xl font-bold text-white mb-1">$49</div>
+                            <p className="text-gray-400 mb-6">per user/month</p>
+                            <ul className="space-y-3 mb-8">
+                                <li className="flex items-center gap-2 text-gray-300"><Check className="w-4 h-4 text-green-400" /> Everything in Pro</li>
+                                <li className="flex items-center gap-2 text-gray-300"><Check className="w-4 h-4 text-green-400" /> Team Collaboration</li>
+                                <li className="flex items-center gap-2 text-gray-300"><Check className="w-4 h-4 text-green-400" /> Centralized Billing</li>
+                            </ul>
+                            <button className="w-full py-3 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg transition">Contact Sales</button>
+                        </div>
+                    )}
+
+                    {/* Pro/Enterprise Monthly */}
+                    <div className={`bg-gradient-to-b ${viewMode === 'individual' ? 'from-purple-500/20 to-pink-500/20 border-purple-500/50' : 'from-indigo-500/20 to-blue-500/20 border-indigo-500/50'} backdrop-blur-lg rounded-2xl p-8 border-2 relative`}>
+                        <div className={`absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 ${viewMode === 'individual' ? 'bg-purple-500' : 'bg-indigo-500'} text-white text-xs font-bold rounded-full`}>
                             POPULAR
                         </div>
-                        <h3 className="text-xl font-bold text-white mb-2">Pro Monthly</h3>
-                        <div className="text-4xl font-bold text-white mb-1">$29</div>
-                        <p className="text-gray-400 mb-6">per month</p>
+                        <div className="flex justify-between items-start mb-2">
+                            <h3 className="text-xl font-bold text-white">{viewMode === 'individual' ? 'Pro Monthly' : 'Enterprise Monthly'}</h3>
+                            {/* Coupon only for Individual Pro for now, or Enterprise if we want */}
+                            {viewMode === 'individual' && (
+                                <div className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 text-yellow-300 text-xs px-2 py-1 rounded border border-yellow-500/40 animate-pulse">
+                                    Code: bosdb100 (100% OFF)
+                                </div>
+                            )}
+                        </div>
+                        <div className="text-4xl font-bold text-white mb-1">${viewMode === 'individual' ? '29' : '99'}</div>
+                        <p className="text-gray-400 mb-6">per {viewMode === 'individual' ? 'month' : 'org/month'}</p>
 
                         <ul className="space-y-3 mb-8">
-                            {PRICING.pro_monthly.features.map((f, i) => (
+                            {(viewMode === 'individual' ? PRICING.pro_monthly.features : (PRICING as any).enterprise_monthly.features).map((f: string, i: number) => (
                                 <li key={i} className="flex items-center gap-2 text-gray-200">
-                                    <Check className="w-4 h-4 text-purple-400" />
+                                    <Check className={`w-4 h-4 ${viewMode === 'individual' ? 'text-purple-400' : 'text-indigo-400'}`} />
                                     {f}
                                 </li>
                             ))}
                         </ul>
 
                         <button
-                            onClick={() => handleUpgrade('pro_monthly')}
-                            disabled={planType === 'monthly' || planType === 'yearly'}
-                            className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold rounded-lg transition disabled:opacity-50"
+                            onClick={() => handleUpgrade(viewMode === 'individual' ? 'pro_monthly' : 'enterprise_monthly' as any)} // Cast for now, logic needs update if we support enterprise upgrade
+                            disabled={planType === 'monthly' || planType === 'yearly'} // Simplified check
+                            className={`w-full py-3 bg-gradient-to-r ${viewMode === 'individual' ? 'from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700' : 'from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700'} text-white font-semibold rounded-lg transition disabled:opacity-50`}
                         >
-                            {(planType === 'monthly' || planType === 'yearly') ? 'Current Plan' : 'Upgrade Now'}
+                            {(planType === 'monthly' && viewMode === 'individual') ? 'Current Plan' : 'Upgrade Now'}
                         </button>
                     </div>
 
-                    {/* Pro Yearly */}
+                    {/* Pro/Enterprise Yearly */}
                     <div className="bg-white/5 backdrop-blur-lg rounded-2xl p-8 border border-white/10">
-                        <h3 className="text-xl font-bold text-white mb-2">Pro Yearly</h3>
-                        <div className="text-4xl font-bold text-white mb-1">$249</div>
+                        <div className="flex justify-between items-start mb-2">
+                            <h3 className="text-xl font-bold text-white">{viewMode === 'individual' ? 'Pro Yearly' : 'Enterprise Yearly'}</h3>
+                            {viewMode === 'individual' && (
+                                <div className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 text-yellow-300 text-xs px-2 py-1 rounded border border-yellow-500/40 animate-pulse">
+                                    Code: omnigang100 (100% OFF)
+                                </div>
+                            )}
+                        </div>
+                        <div className="text-4xl font-bold text-white mb-1">${viewMode === 'individual' ? '249' : '999'}</div>
                         <p className="text-gray-400 mb-1">per year</p>
-                        <p className="text-green-400 text-sm mb-6">Save 29% (2 months free!)</p>
+                        <p className="text-green-400 text-sm mb-6">Save {viewMode === 'individual' ? '29%' : '16%'} (2 months free!)</p>
 
                         <ul className="space-y-3 mb-8">
-                            {PRICING.pro_yearly.features.map((f, i) => (
+                            {(viewMode === 'individual' ? PRICING.pro_yearly.features : (PRICING as any).enterprise_yearly.features).map((f: string, i: number) => (
                                 <li key={i} className="flex items-center gap-2 text-gray-300">
                                     <Check className="w-4 h-4 text-green-400" />
                                     {f}
@@ -281,37 +340,38 @@ export default function PricingPage() {
                         </ul>
 
                         <button
-                            onClick={() => handleUpgrade('pro_yearly')}
+                            onClick={() => handleUpgrade(viewMode === 'individual' ? 'pro_yearly' : 'enterprise_yearly' as any)}
                             disabled={planType === 'yearly'}
                             className="w-full py-3 bg-white/10 hover:bg-white/20 text-white font-semibold rounded-lg transition disabled:opacity-50"
                         >
-                            {planType === 'yearly' ? 'Current Plan' : (planType === 'monthly' ? 'Upgrade to Yearly' : 'Upgrade Now')}
+                            {planType === 'yearly' && viewMode === 'individual' ? 'Current Plan' : (planType === 'monthly' && viewMode === 'individual' ? 'Upgrade to Yearly' : 'Upgrade Now')}
                         </button>
                     </div>
                 </div>
 
                 {/* Feature Comparison */}
-                <div className="max-w-4xl mx-auto">
+                <div className="max-w-6xl mx-auto">
                     <h3 className="text-2xl font-bold text-white text-center mb-8">Feature Comparison</h3>
-                    <div className="bg-white/5 backdrop-blur-lg rounded-2xl border border-white/10 overflow-hidden">
-                        <table className="w-full">
+                    <div className="bg-white/5 backdrop-blur-lg rounded-2xl border border-white/10 overflow-hidden overflow-x-auto">
+                        <table className="w-full min-w-[600px]">
                             <thead>
                                 <tr className="border-b border-white/10">
                                     <th className="px-6 py-4 text-left text-gray-400">Feature</th>
                                     <th className="px-6 py-4 text-center text-gray-400">Free</th>
                                     <th className="px-6 py-4 text-center text-purple-400">Pro</th>
+                                    <th className="px-6 py-4 text-center text-indigo-400">Enterprise</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
-                                <tr><td className="px-6 py-3 text-gray-300">Database Connections</td><td className="px-6 py-3 text-center text-gray-400">2</td><td className="px-6 py-3 text-center text-white">Unlimited</td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Query History</td><td className="px-6 py-3 text-center text-gray-400">50</td><td className="px-6 py-3 text-center text-white">Unlimited</td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Version Control</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Commit History</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Table Designer</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Data Grid Editing</td><td className="px-6 py-3 text-center text-gray-400">Read-only</td><td className="px-6 py-3 text-center text-white">Full Edit</td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Export Formats</td><td className="px-6 py-3 text-center text-gray-400">CSV</td><td className="px-6 py-3 text-center text-white">CSV, JSON, SQL</td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Granular Permissions</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
-                                <tr><td className="px-6 py-3 text-gray-300">Priority Support</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Database Connections</td><td className="px-6 py-3 text-center text-gray-400">2</td><td className="px-6 py-3 text-center text-white">Unlimited</td><td className="px-6 py-3 text-center text-white">Unlimited</td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Query History</td><td className="px-6 py-3 text-center text-gray-400">50</td><td className="px-6 py-3 text-center text-white">Unlimited</td><td className="px-6 py-3 text-center text-white">Unlimited</td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Version Control</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Table Designer</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Data Grid Editing</td><td className="px-6 py-3 text-center text-gray-400">Read-only</td><td className="px-6 py-3 text-center text-white">Full Edit</td><td className="px-6 py-3 text-center text-white">Full Edit</td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Granular Permissions</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">SSO / SAML</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Audit Logs</td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><X className="w-4 h-4 text-red-400 mx-auto" /></td><td className="px-6 py-3 text-center"><Check className="w-4 h-4 text-green-400 mx-auto" /></td></tr>
+                                <tr><td className="px-6 py-3 text-gray-300">Support Level</td><td className="px-6 py-3 text-center text-gray-400">Community</td><td className="px-6 py-3 text-center text-white">Priority</td><td className="px-6 py-3 text-center text-indigo-400 font-bold">Dedicated</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -364,32 +424,32 @@ export default function PricingPage() {
                                             <h1 className="text-sm font-bold text-gray-400 uppercase mb-4">You're paying</h1>
                                             <div className="flex items-baseline gap-1">
                                                 <span className="text-4xl font-bold text-white">
-                                                    ${calculateDiscountedPrice(selectedPlan === 'pro_monthly' ? 29 : 249, appliedCoupon)}
+                                                    ${calculateDiscountedPrice((PRICING as any)[selectedPlan].price, appliedCoupon)}
                                                 </span>
                                                 <span className="text-gray-400 text-sm">
-                                                    USD / {selectedPlan === 'pro_monthly' ? 'month' : 'year'}
+                                                    USD / {selectedPlan.includes('monthly') ? 'month' : 'year'}
                                                 </span>
                                             </div>
                                             <p className="text-xs text-gray-500 mt-2">
-                                                {selectedPlan === 'pro_monthly' ? 'Cancel anytime. Pro features activate immediately.' : 'Billed annually. Best value for teams.'}
+                                                {selectedPlan.includes('monthly') ? 'Cancel anytime. Features activate immediately.' : 'Billed annually. Best value.'}
                                             </p>
                                         </div>
 
                                         <div className="space-y-4">
                                             <div className="flex justify-between text-sm">
                                                 <span className="text-gray-400">Pro Subscription</span>
-                                                <span className="text-white">${selectedPlan === 'pro_monthly' ? '29.00' : '249.00'}</span>
+                                                <span className="text-white">${(PRICING as any)[selectedPlan].price.toFixed(2)}</span>
                                             </div>
                                             {discount > 0 && (
                                                 <div className="flex justify-between text-sm text-green-400">
                                                     <span>Coupon ({appliedCoupon})</span>
-                                                    <span>-${selectedPlan === 'pro_monthly' ? (29 * discount / 100).toFixed(2) : (249 * discount / 100).toFixed(2)}</span>
+                                                    <span>-${((PRICING as any)[selectedPlan].price * discount / 100).toFixed(2)}</span>
                                                 </div>
                                             )}
                                             <div className="h-px bg-white/5 my-4" />
                                             <div className="flex justify-between text-lg font-bold">
                                                 <span className="text-white">Total due</span>
-                                                <span className="text-white">${calculateDiscountedPrice(selectedPlan === 'pro_monthly' ? 29 : 249, appliedCoupon)}.00</span>
+                                                <span className="text-white">${calculateDiscountedPrice((PRICING as any)[selectedPlan].price, appliedCoupon)}.00</span>
                                             </div>
                                         </div>
                                     </div>
@@ -422,6 +482,18 @@ export default function PricingPage() {
                                                     Apply
                                                 </button>
                                             </div>
+                                            {/* Suggest "free thing" coupon */}
+                                            {!appliedCoupon && (
+                                                <div className="mt-2 text-xs text-purple-400">
+                                                    <p className="font-bold animate-pulse">🔥 Crazy Free Limited Time Offer!</p>
+                                                    <button
+                                                        onClick={() => setCoupon(selectedPlan === 'pro_yearly' ? 'omnigang100' : 'bosdb100')}
+                                                        className="hover:text-purple-300 underline mt-1"
+                                                    >
+                                                        Use <strong>{selectedPlan === 'pro_yearly' ? 'omnigang100' : 'bosdb100'}</strong> for 100% OFF!
+                                                    </button>
+                                                </div>
+                                            )}
                                             {error && error.includes('coupon') && (
                                                 <p className="text-red-400 text-[10px] mt-1">{error}</p>
                                             )}
@@ -498,7 +570,7 @@ export default function PricingPage() {
                                                     {appliedCoupon === 'omnigang100' ? (
                                                         <>Activate Pro Free <Star className="w-4 h-4 fill-white animate-pulse" /></>
                                                     ) : (
-                                                        <>Pay ${calculateDiscountedPrice(selectedPlan === 'pro_monthly' ? 29 : 249, appliedCoupon)} <Zap className="w-4 h-4 group-hover:scale-110 transition" /></>
+                                                        <>Pay ${calculateDiscountedPrice((PRICING as any)[selectedPlan].price, appliedCoupon)} <Zap className="w-4 h-4 group-hover:scale-110 transition" /></>
                                                     )}
                                                 </>
                                             )}

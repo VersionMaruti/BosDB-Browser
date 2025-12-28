@@ -96,8 +96,8 @@ export const PRO_FEATURES = [
     'unlimited_connections',
     'json_export',
     'sql_export',
-    'advanced_git',    // Advanced Git features (branching, merging, etc.)
-    'all_databases'    // Access to all 100+ DB types
+    'git_access',
+    'pro_databases'
 ] as const;
 
 export const FREE_FEATURES = [
@@ -192,30 +192,81 @@ export const PRICING = {
             'Priority Support',
             'Early Access to New Features'
         ]
+    },
+    enterprise_monthly: {
+        name: 'Enterprise Monthly',
+        price: 99,
+        period: 'month',
+        features: [
+            'Everything in Pro',
+            'SSO / SAML',
+            'Audit Logs',
+            'Dedicated Support',
+            '99.9% SLA',
+            'Advanced Security'
+        ]
+    },
+    enterprise_yearly: {
+        name: 'Enterprise Yearly',
+        price: 999,
+        period: 'year',
+        savings: '16%',
+        features: [
+            'Everything in Enterprise Monthly',
+            '2 Months FREE',
+            'Dedicated Success Manager',
+            'Custom Contracts',
+            'Training Sessions'
+        ]
     }
 };
 
 /**
- * Valid coupons and their discounts
+ * Coupon configuration
  */
-export const COUPONS = {
-    'omnigang100': { discountPercent: 100, label: '100% OFF - New Entry Promotion' },
+export const COUPONS: Record<string, { discount_percent: number, description: string, allowed_plans?: string[] }> = {
+    'bosdb100': {
+        discount_percent: 100,
+        description: '100% OFF Monthly Plan',
+        allowed_plans: ['pro_monthly']
+    },
+    'omnigang100': {
+        discount_percent: 100,
+        description: '100% OFF Yearly Plan',
+        allowed_plans: ['pro_yearly']
+    }
 };
 
 /**
- * Check if a coupon is valid
+ * Validate a coupon code for a specific plan
  */
-export function isValidCoupon(coupon: string): boolean {
-    return coupon in COUPONS;
+export function isValidCoupon(code: string, planId?: string): boolean {
+    const coupon = COUPONS[code];
+    if (!coupon) return false;
+
+    // If planId is provided, check if it's allowed for this coupon
+    if (planId && coupon.allowed_plans) {
+        return coupon.allowed_plans.includes(planId);
+    }
+
+    return true;
 }
 
 /**
  * Calculate discounted price
  */
-export function calculateDiscountedPrice(price: number, coupon: string): number {
-    const couponData = (COUPONS as any)[coupon];
-    if (!couponData) return price;
+export function calculateDiscountedPrice(originalPrice: number, couponCode?: string, planId?: string): number {
+    if (!couponCode || !COUPONS[couponCode]) {
+        return originalPrice;
+    }
 
-    const discount = (price * couponData.discountPercent) / 100;
-    return Math.max(0, price - discount);
+    const coupon = COUPONS[couponCode];
+
+    // Validate plan restriction
+    if (planId && coupon.allowed_plans && !coupon.allowed_plans.includes(planId)) {
+        return originalPrice;
+    }
+
+    const discount = coupon.discount_percent;
+    return Math.max(0, originalPrice * (1 - discount / 100));
 }

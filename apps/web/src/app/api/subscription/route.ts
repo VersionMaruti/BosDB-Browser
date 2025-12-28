@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findOrganizationById, updateOrgSubscription, createOrganization } from '@/lib/organization';
 import { findUserById } from '@/lib/users-store';
+import { COUPONS } from '@/lib/subscription';
 
 // GET /api/subscription - Get organization subscription status
 export async function GET(request: NextRequest) {
@@ -95,12 +96,20 @@ export async function POST(request: NextRequest) {
         }
 
         // Validate plan
-        if (!plan || !['pro_trial', 'pro_monthly', 'pro_yearly'].includes(plan)) {
+        if (!plan || !['pro_trial', 'pro_monthly', 'pro_yearly', 'enterprise_monthly', 'enterprise_yearly'].includes(plan)) {
             return NextResponse.json({ error: 'Invalid plan' }, { status: 400 });
         }
 
-        // Check for 100% off coupon
-        const isFreeWithCoupon = coupon === 'omnigang100';
+        // Check for specific coupon validity
+        const couponData = coupon ? COUPONS[coupon as keyof typeof COUPONS] : null;
+        const isFreeWithCoupon = couponData?.discount_percent === 100;
+
+        // Validate coupon plan restriction
+        if (couponData && couponData.allowed_plans && !couponData.allowed_plans.includes(plan)) {
+            return NextResponse.json({
+                error: `Coupon '${coupon}' is not valid for plan '${plan}'`
+            }, { status: 400 });
+        }
 
         // For paid plans, validate card (demo) - Skip if 100% off coupon applied
         if (plan !== 'pro_trial' && !isFreeWithCoupon) {
@@ -122,11 +131,11 @@ export async function POST(request: NextRequest) {
             const expiry = new Date(now);
             expiry.setDate(expiry.getDate() + 30);
             expiresAt = expiry.toISOString();
-        } else if (plan === 'pro_monthly') {
+        } else if (plan === 'pro_monthly' || plan === 'enterprise_monthly') {
             const expiry = new Date(now);
             expiry.setDate(expiry.getDate() + 30);
             expiresAt = expiry.toISOString();
-        } else if (plan === 'pro_yearly') {
+        } else if (plan === 'pro_yearly' || plan === 'enterprise_yearly') {
             const expiry = new Date(now);
             expiry.setFullYear(expiry.getFullYear() + 1);
             expiresAt = expiry.toISOString();
@@ -134,8 +143,8 @@ export async function POST(request: NextRequest) {
 
         // Update organization subscription
         const updated = updateOrgSubscription(orgId, {
-            plan: 'pro',
-            planType: plan === 'pro_trial' ? 'trial' : (plan === 'pro_monthly' ? 'monthly' : 'yearly'),
+            plan: plan.startsWith('enterprise') ? 'enterprise' : 'pro',
+            planType: plan === 'pro_trial' ? 'trial' : (plan.includes('monthly') ? 'monthly' : 'yearly'),
             isTrial: plan === 'pro_trial',
             activatedAt: now.toISOString(),
             expiresAt: expiresAt

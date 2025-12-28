@@ -332,19 +332,21 @@ export default function LoginPage() {
                 <p className="text-xs text-gray-500 mt-1">Must be 8+ characters with uppercase, lowercase, and number</p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Role *
-                </label>
-                <select
-                  value={newUser.role}
-                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'admin' | 'user' })}
-                  className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white"
-                >
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
+              {newUser.accountType === 'enterprise' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Role *
+                  </label>
+                  <select
+                    value={newUser.role}
+                    onChange={(e) => setNewUser({ ...newUser, role: e.target.value as 'admin' | 'user' })}
+                    className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white"
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             <button
