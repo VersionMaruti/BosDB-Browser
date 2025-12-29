@@ -26,6 +26,8 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
 
 # Copy built application
 COPY --from=builder /app/apps/web/.next/standalone ./
@@ -37,4 +39,4 @@ RUN mkdir -p /app/apps/web/.bosdb-data
 
 EXPOSE 3000
 
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "server.js"]
