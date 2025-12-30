@@ -19,6 +19,7 @@ const nextConfig = {
             'long',
             'named-placeholders',
             'named-placeholders',
+            'dockerode',
             'ssh2',
             'docker-modem',
             'mongodb',
