@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Database, Plus, Play, History, Save, LogOut, User, Shield, Zap, Star, Building, Lock } from 'lucide-react';
+import { Database, Plus, Play, History, Save, LogOut, User, Shield, Zap, Star, Building, Lock, Trash2 } from 'lucide-react';
 import { VALID_DATABASE_TYPES } from '@/constants/database-types';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -17,6 +17,7 @@ interface Connection {
     database: string;
     status: string;
     readOnly: boolean;
+    organizationId?: string;
 }
 
 export default function DashboardPage() {
@@ -53,7 +54,15 @@ export default function DashboardPage() {
 
     const fetchConnections = async () => {
         try {
-            const res = await fetch('/api/connections');
+            const user = getCurrentUser();
+            const headers: HeadersInit = {};
+            if (user?.email) {
+                headers['x-user-email'] = user.email;
+            }
+            if (user?.organizationId) {
+                headers['x-org-id'] = user.organizationId;
+            }
+            const res = await fetch('/api/connections', { headers });
             const data = await res.json();
             setConnections(data.connections || []);
         } catch (error) {
@@ -268,26 +277,79 @@ function QuickActionCard({
 }
 
 function ConnectionCard({ connection }: { connection: Connection }) {
+    const [deleting, setDeleting] = useState(false);
+
+    const handleDelete = async () => {
+        if (!confirm(`Delete connection "${connection.name}"? This action cannot be undone.`)) {
+            return;
+        }
+
+        setDeleting(true);
+        try {
+            const user = getCurrentUser();
+            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            if (user?.email) {
+                headers['x-user-email'] = user.email;
+            }
+            if (user?.organizationId) {
+                headers['x-org-id'] = user.organizationId;
+            }
+
+            const res = await fetch(`/api/connections?id=${connection.id}`, {
+                method: 'DELETE',
+                headers
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to delete connection');
+            }
+
+            // Refresh connections list
+            window.location.reload();
+        } catch (error: any) {
+            alert(error.message || 'Failed to delete connection');
+            setDeleting(false);
+        }
+    };
+
     return (
-        <div className="p-6 bg-card border border-border rounded-lg hover:border-primary transition-all group">
+        <div className="p-6 bg-card border border-border rounded-lg hover:border-primary transition-all group relative">
             <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
                         <Database className="w-5 h-5 text-primary" />
                     </div>
                     <div>
-                        <h3 className="font-semibold">{connection.name}</h3>
+                        <div className="flex items-center gap-2">
+                            <h3 className="font-semibold">{connection.name}</h3>
+                            {connection.organizationId && (
+                                <span className="px-1.5 py-0.5 text-[10px] uppercase font-bold bg-blue-500/10 text-blue-500 rounded border border-blue-500/20">
+                                    Org
+                                </span>
+                            )}
+                        </div>
                         <p className="text-sm text-muted-foreground capitalize">{connection.type}</p>
                     </div>
                 </div>
-                <span
-                    className={`px-2 py-1 text-xs rounded-full ${connection.status === 'connected'
-                        ? 'bg-green-500/10 text-green-500'
-                        : 'bg-gray-500/10 text-gray-500'
-                        }`}
-                >
-                    {connection.status}
-                </span>
+                <div className="flex items-center gap-2">
+                    <span
+                        className={`px-2 py-1 text-xs rounded-full ${connection.status === 'connected'
+                            ? 'bg-green-500/10 text-green-500'
+                            : 'bg-gray-500/10 text-gray-500'
+                            }`}
+                    >
+                        {connection.status}
+                    </span>
+                    <button
+                        onClick={handleDelete}
+                        disabled={deleting}
+                        className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition disabled:opacity-50"
+                        title="Delete connection"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                </div>
             </div>
 
             <div className="space-y-2 text-sm mb-4">
@@ -543,9 +605,13 @@ function NewConnectionModal({
             setProgress('Saving connection...');
 
             // Save connection instantly (skipTest=true means no connection test needed)
+            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            if (user?.email) headers['x-user-email'] = user.email;
+            if (user?.organizationId) headers['x-org-id'] = user.organizationId;
+
             const connRes = await fetch('/api/connections', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
                     name: data.database.name,
                     type: data.database.type,
@@ -583,9 +649,14 @@ function NewConnectionModal({
         setError('');
 
         try {
+            const user = getCurrentUser();
+            const headers: HeadersInit = { 'Content-Type': 'application/json' };
+            if (user?.email) headers['x-user-email'] = user.email;
+            if (user?.organizationId) headers['x-org-id'] = user.organizationId;
+
             const res = await fetch('/api/connections', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify(manualConnection),
             });
 

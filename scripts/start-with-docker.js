@@ -117,7 +117,11 @@ function startDevServer() {
     const devProcess = spawn(npm, ['run', 'dev', '--workspace=apps/web'], {
         cwd: projectRoot,
         stdio: 'inherit',
-        shell: true
+        shell: true,
+        env: {
+            ...process.env,
+            NEXT_SKIP_LOCKFILE_PATCHING: '1'
+        }
     });
 
     devProcess.on('error', (error) => {

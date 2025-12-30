@@ -2,7 +2,12 @@
 const nextConfig = {
     reactStrictMode: false,
     output: 'standalone', // For Docker deployment
-    transpilePackages: [], 
+    transpilePackages: [],
+    onDemandEntries: {
+        // Suppress lockfile patching warnings
+        maxInactiveAge: 60 * 1000,
+        pagesBufferLength: 5,
+    },
     experimental: {
         instrumentationHook: true,
         serverComponentsExternalPackages: [

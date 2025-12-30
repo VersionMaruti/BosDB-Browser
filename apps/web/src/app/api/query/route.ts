@@ -76,6 +76,8 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        const userEmail = request.headers.get('x-user-email');
+
         // Execute query
         const queryRequest: QueryRequest = {
             connectionId: adapterConnectionId,
@@ -100,6 +102,7 @@ export async function POST(request: NextRequest) {
                 executionTime: result.executionTime,
                 rowCount: result.rowCount,
                 success: true,
+                userEmail: userEmail || undefined,
             });
         } catch (historyError) {
             // Don't fail query if history fails
@@ -117,6 +120,8 @@ export async function POST(request: NextRequest) {
         try {
             const body = await request.clone().json();
             const connInfo = connections.get(body.connectionId);
+            const userEmail = request.headers.get('x-user-email');
+
             if (connInfo) {
                 addQueryToHistory({
                     connectionId: body.connectionId,
@@ -127,6 +132,7 @@ export async function POST(request: NextRequest) {
                     rowCount: 0,
                     success: false,
                     error: error.message,
+                    userEmail: userEmail || undefined,
                 });
             }
         } catch (historyError) {

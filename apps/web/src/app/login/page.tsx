@@ -22,6 +22,9 @@ export default function LoginPage() {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [showRegister, setShowRegister] = useState(false);
+  const [showOTPVerify, setShowOTPVerify] = useState(false);
+  const [otpData, setOtpData] = useState<{ email: string; otp: string; organizationName: string } | null>(null);
+  const [otpInput, setOtpInput] = useState('');
   const [newUser, setNewUser] = useState({
     id: '',
     name: '',
@@ -41,11 +44,8 @@ export default function LoginPage() {
         if (res.ok) {
           const data = await res.json();
 
-          // Deduplicate users by ID (keep first occurrence)
-          const uniqueUsers = Array.from(
-            new Map((data.users || []).map((user: User) => [user.id, user])).values()
-          ) as User[];
-          setUsers(uniqueUsers);
+          // No need to deduplicate - email is globally unique
+          setUsers(data.users || []);
 
           // If no users exist on server, create default admin via API
           if (data.users && data.users.length === 0) {
@@ -65,10 +65,8 @@ export default function LoginPage() {
             // Refresh
             const retry = await fetch('/api/auth');
             const retryData = await retry.json();
-            const uniqueRetryUsers = Array.from(
-              new Map((retryData.users || []).map((user: User) => [user.id, user])).values()
-            ) as User[];
-            setUsers(uniqueRetryUsers);
+            // No need to deduplicate - email is globally unique
+            setUsers(retryData.users || []);
           }
         }
       } catch (err) {
@@ -134,6 +132,19 @@ export default function LoginPage() {
 
       if (!res.ok) throw new Error(data.error || 'Registration failed');
 
+      // Check if OTP verification is required
+      if (data.requiresOTP) {
+        setOtpData({
+          email: data.email,
+          otp: data.otp,
+          organizationName: data.organizationName
+        });
+        setShowRegister(false);
+        setShowOTPVerify(true);
+        setSuccessMessage(data.message || 'OTP sent!');
+        return;
+      }
+
       // Show the message from API response (first user or pending approval)
       setSuccessMessage(data.message || 'Registration successful!');
 
@@ -154,10 +165,93 @@ export default function LoginPage() {
     }
   };
 
+  const handleVerifyOTP = async () => {
+    setError('');
+    setSuccessMessage('');
+
+    if (!otpInput.trim()) {
+      setError('Please enter the OTP');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_otp',
+          email: otpData?.email,
+          otp: otpInput.trim()
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'OTP verification failed');
+
+      // Success! User is now admin
+      setSuccessMessage(data.message || 'Verification successful! You are now the Admin.');
+      setShowOTPVerify(false);
+      setOtpData(null);
+      setOtpInput('');
+      setNewUser({ id: '', name: '', email: '', password: '', role: 'user', accountType: 'enterprise' });
+
+      // Refresh user list
+      const listRes = await fetch('/api/auth');
+      const listData = await listRes.json();
+      setUsers(listData.users || []);
+
+      // Auto-login the user
+      localStorage.setItem('bosdb_current_user', JSON.stringify(data.user));
+
+      // Redirect to dashboard after 2 seconds
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 2000);
+
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-6">
+
+      {/* Floating OTP Display - Top Right Corner */}
+      {showOTPVerify && otpData && (
+        <div className="fixed top-6 right-6 z-50 animate-slideInRight">
+          <div className="bg-gradient-to-br from-blue-600 to-purple-600 p-6 rounded-2xl shadow-2xl border-2 border-blue-400 max-w-sm">
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">🔑</span>
+                <div>
+                  <p className="text-white font-bold text-sm uppercase tracking-wide">Your OTP</p>
+                  <p className="text-blue-100 text-xs">Testing Mode</p>
+                </div>
+              </div>
+              <div className="bg-white/20 px-2 py-1 rounded-full">
+                <p className="text-white text-xs font-semibold">10 min</p>
+              </div>
+            </div>
+
+            <div className="bg-white/10 backdrop-blur-sm p-4 rounded-xl mb-3">
+              <p className="text-white text-4xl font-mono font-bold tracking-[0.3em] text-center select-all">
+                {otpData.otp}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 text-blue-100 text-xs">
+              <span className="truncate">📧 {otpData.email}</span>
+            </div>
+
+            <p className="text-blue-200 text-xs mt-3 text-center italic">
+              Enter this code below to verify
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-md w-full">
         {/* Back to Home */}
         <Link href="/" className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition mb-6">
@@ -178,7 +272,56 @@ export default function LoginPage() {
           </div>
         )}
 
-        {!showRegister ? (
+        {showOTPVerify ? (
+          // OTP Verification Form
+          <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
+            <h2 className="text-2xl font-bold text-white mb-4">🔐 Verify Your Email</h2>
+            <p className="text-gray-400 text-sm mb-6">
+              You're about to become the Admin of <span className="text-purple-400 font-semibold">{otpData?.organizationName}</span>. Please enter the OTP to verify your email.
+            </p>
+
+            {error && (
+              <div className="mb-4 p-3 bg-red-500/10 border border-red-500 text-red-400 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Enter OTP *
+              </label>
+              <input
+                type="text"
+                value={otpInput}
+                onChange={(e) => setOtpInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleVerifyOTP()}
+                placeholder="000000"
+                maxLength={6}
+                className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-lg text-white text-center text-2xl font-mono tracking-widest placeholder-gray-500 focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <button
+              onClick={handleVerifyOTP}
+              className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold rounded-lg transition mb-3"
+            >
+              Verify & Become Admin
+            </button>
+
+            <button
+              onClick={() => {
+                setShowOTPVerify(false);
+                setOtpData(null);
+                setOtpInput('');
+                setShowRegister(true);
+              }}
+              className="w-full px-4 py-3 border border-gray-600 hover:bg-gray-700 text-gray-300 rounded-lg transition"
+            >
+              Back to Registration
+            </button>
+          </div>
+
+        ) : !showRegister ? (
           // Login Form
           <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
             <h2 className="text-2xl font-bold text-white mb-6">Employee Login</h2>
@@ -363,11 +506,11 @@ export default function LoginPage() {
             <div className="flex flex-wrap gap-2">
               {users.map(user => (
                 <span
-                  key={user.id}
+                  key={user.email}
                   className="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded cursor-pointer hover:bg-gray-600"
-                  onClick={() => { setUserId(user.id); setShowRegister(false); }}
+                  onClick={() => { setUserId(user.email); setShowRegister(false); }}
                 >
-                  {user.id} <span className="text-gray-500">({user.role})</span>
+                  {user.name || user.id} <span className="text-gray-500">({user.role})</span>
                 </span>
               ))}
             </div>

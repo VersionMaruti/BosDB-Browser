@@ -2,20 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUsers, createUser, findUserById, findUserByEmail, getUsersByOrg } from '@/lib/users-store';
 import { hashPassword, verifyPassword, validatePassword } from '@/lib/auth';
 import { getOrCreateOrgForUser, findOrganizationById, findOrganizationByDomain, extractDomain } from '@/lib/organization';
+import { createOTP, verifyOTP, getOTPForDisplay } from '@/lib/otp-manager';
 
 export async function GET() {
     // Public endpoint to list simple user info (for login page dropdown)
     const users = await getUsers();
 
-    // Deduplicate users by ID to prevent React key errors in frontend
-    const uniqueUsersMap = new Map();
-    users.forEach(u => {
-        if (!uniqueUsersMap.has(u.id)) {
-            uniqueUsersMap.set(u.id, { id: u.id, name: u.name, role: u.role });
-        }
-    });
+    // Return user info with email as the unique identifier
+    const publicUsers = users.map(u => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role
+    }));
 
-    const publicUsers = Array.from(uniqueUsersMap.values());
     return NextResponse.json({ users: publicUsers });
 }
 
@@ -123,15 +123,8 @@ export async function POST(request: NextRequest) {
             // Generate User ID if not provided (Google Login)
             const finalUserId = userData.id || (action === 'google_login' ? userData.email.split('@')[0] : userData.id);
 
-            // Check ID uniqueness in Org
-            const orgUsers = await getUsersByOrg(org.id);
-            if (orgUsers.some(u => u.id === finalUserId)) {
-                if (finalAccountType === 'individual') {
-                    return NextResponse.json({ error: 'Username taken. Please choose another.' }, { status: 409 });
-                }
-                // For enterprise google login, handle collision by appending random? For now, error.
-                return NextResponse.json({ error: 'User ID exists in organization.' }, { status: 409 });
-            }
+            // Note: User IDs don't need to be unique - email is the globally unique identifier
+
 
             // Determine Role & Status
             // Rule: New Org -> Admin/Approved. Existing Org (Enterprise) -> User/Pending.
@@ -146,13 +139,37 @@ export async function POST(request: NextRequest) {
             } else {
                 // Enterprise
                 if (isNew) {
+                    // NEW ORGANIZATION - Require OTP verification for security
+                    // This prevents someone from registering with "user@amazon.com" and taking over the Amazon org
+
                     role = 'admin';
                     status = 'approved';
-                    message = `Organization "${org.name}" created. You are the Admin.`;
 
-                    // Update Org with Admin ID
-                    const { updateOrganization } = await import('@/lib/organization');
-                    updateOrganization(org.id, { adminUserId: finalUserId });
+                    const newUserData = {
+                        id: finalUserId,
+                        email: userData.email,
+                        name: userData.name || userData.email.split('@')[0],
+                        password: hashedPassword,
+                        googleId: googleId,
+                        accountType: finalAccountType,
+                        organizationId: org.id,
+                        role,
+                        status,
+                        createdAt: new Date()
+                    };
+
+                    // Generate OTP
+                    const otp = createOTP(userData.email, org.id, newUserData);
+
+                    console.log(`[Auth] OTP required for first user of org "${org.name}"`);
+
+                    return NextResponse.json({
+                        requiresOTP: true,
+                        email: userData.email,
+                        organizationName: org.name,
+                        otp: otp, // Display OTP for testing (remove in production or send via email)
+                        message: `Verification required. An OTP has been generated for ${userData.email}. Enter it to complete registration as Admin of "${org.name}".`
+                    });
                 } else {
                     // Existing Enterprise Org
                     role = 'user';
@@ -181,6 +198,41 @@ export async function POST(request: NextRequest) {
                 user: newUser,
                 organization: org,
                 message
+            });
+        }
+
+        // --- VERIFY OTP ---
+        if (action === 'verify_otp') {
+            const { email, otp } = body;
+
+            if (!email || !otp) {
+                return NextResponse.json({ error: 'Email and OTP are required' }, { status: 400 });
+            }
+
+            const verification = verifyOTP(email, otp);
+
+            if (!verification.valid) {
+                return NextResponse.json({ error: verification.error }, { status: 400 });
+            }
+
+            // OTP is valid - create the user with admin privileges
+            const newUser = verification.userData;
+            await createUser(newUser);
+
+            // Update Org with Admin ID
+            const { updateOrganization } = await import('@/lib/organization');
+            await updateOrganization(verification.organizationId!, { adminUserId: newUser.id });
+
+            // Get organization details
+            const org = await findOrganizationById(verification.organizationId!);
+
+            console.log(`[Auth] OTP verified! User ${newUser.email} is now Admin of "${org?.name}"`);
+
+            return NextResponse.json({
+                success: true,
+                user: newUser,
+                organization: org,
+                message: `Organization "${org?.name}" created. You are the Admin.`
             });
         }
 

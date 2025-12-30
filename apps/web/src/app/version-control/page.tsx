@@ -100,12 +100,47 @@ function VersionControlContent() {
         });
 
         if (res.ok) {
-            alert(`✅ Commit created by ${user.name}!`);
+            alert(`✅ Commit created by ${user.name} on branch ${currentBranch}!`);
             await loadAllData();
         } else {
             const error = await res.json();
             alert(`❌ Failed to create commit: ${error.error || 'Unknown error'}`);
             console.error('Commit error:', error);
+        }
+    };
+
+    const revertCommit = async (commitId: string, message: string) => {
+        if (!confirm(`Are you sure you want to REVERT this specific commit?\n\n"${message}"\n\nThis will generate inverse SQL to undo just these changes.`)) {
+            return;
+        }
+
+        const user = promptForUserIfNeeded();
+
+        try {
+            const res = await fetch('/api/vcs/rollback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    connectionId,
+                    commitId,
+                    isRevert: true,
+                    author: {
+                        name: user.name,
+                        email: user.email,
+                        userId: (user as any).userId || (user as any).id
+                    }
+                })
+            });
+
+            if (res.ok) {
+                alert(`✅ Successfully reverted commit ${commitId.substring(0, 8)}!`);
+                await loadAllData();
+            } else {
+                const error = await res.json();
+                alert(`❌ Revert failed: ${error.error}`);
+            }
+        } catch (error) {
+            alert(`❌ Error during revert: ${error}`);
         }
     };
 
@@ -441,6 +476,12 @@ function VersionControlContent() {
                                                                     ⏮️ Rollback to r{-idx}
                                                                 </button>
                                                             )}
+                                                            <button
+                                                                onClick={() => revertCommit(commit.id, commit.message)}
+                                                                className="px-3 py-1 text-sm bg-red-600/30 hover:bg-red-600 border border-red-500/50 rounded transition"
+                                                            >
+                                                                ⏪ Revert
+                                                            </button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -600,6 +641,11 @@ function VersionControlContent() {
                                                                 </div>
                                                                 <p className="text-sm text-gray-400 mt-1">
                                                                     by {commit.author?.name}
+                                                                    {commit.branchName && (
+                                                                        <span className="ml-2 px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-xs">
+                                                                            on {commit.branchName}
+                                                                        </span>
+                                                                    )}
                                                                     {(commit.author as any)?.userId && (
                                                                         <span className="ml-1 text-purple-400">
                                                                             ({(commit.author as any).userId})
@@ -608,9 +654,17 @@ function VersionControlContent() {
                                                                     {' • '}{new Date(commit.timestamp).toLocaleDateString()} at {new Date(commit.timestamp).toLocaleTimeString()}
                                                                 </p>
                                                             </div>
-                                                            <code className="text-xs bg-gray-900 px-2 py-1 rounded">
-                                                                {commit.id?.substring(0, 8)}
-                                                            </code>
+                                                            <div className="flex gap-2 items-center">
+                                                                <button
+                                                                    onClick={() => revertCommit(commit.id, commit.message)}
+                                                                    className="text-xs bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white px-2 py-1 rounded border border-red-500/30 transition"
+                                                                >
+                                                                    ⏪ Revert
+                                                                </button>
+                                                                <code className="text-xs bg-gray-900 px-2 py-1 rounded">
+                                                                    {commit.id?.substring(0, 8)}
+                                                                </code>
+                                                            </div>
                                                         </div>
 
                                                         <div className="text-sm text-gray-300 mb-2">

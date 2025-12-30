@@ -16,35 +16,14 @@ export async function POST(request: NextRequest) {
 
         // Initialize VCS
         const vcsPath = path.join(process.cwd(), '.bosdb-vcs', connectionId);
-        await fs.mkdir(vcsPath, { recursive: true });
-
         const storage = new FileStorage(vcsPath);
         await storage.initialize();
 
         const vc = createVersionControl(connectionId, storage);
 
-        // Check if initialized, if not initialize
-        try {
-            await vc.getHEAD();
-        } catch {
-            await vc.initialize();
-        }
-
-        // Ensure branches directory exists and main branch is created
-        const branchesDir = path.join(vcsPath, 'branches');
-        await fs.mkdir(branchesDir, { recursive: true });
-
-        const mainBranchPath = path.join(branchesDir, 'main.json');
-        try {
-            await fs.access(mainBranchPath);
-        } catch {
-            // Create main branch if it doesn't exist
-            await fs.writeFile(mainBranchPath, JSON.stringify({
-                name: 'main',
-                commitId: '',
-                protected: true
-            }));
-        }
+        // Ensure initialized and state is loaded
+        await vc.initialize();
+        await (vc as any).loadHEAD();
 
         // Use provided author or default
         const commitAuthor = author || {
@@ -118,11 +97,9 @@ export async function GET(request: NextRequest) {
 
         const vc = createVersionControl(connectionId, storage);
 
-        try {
-            await vc.getHEAD();
-        } catch {
-            await vc.initialize();
-        }
+        // Ensure initialized and state is loaded
+        await vc.initialize();
+        await (vc as any).loadHEAD();
 
         const result = await vc.log({ maxCount: 50 });
 

@@ -14,6 +14,7 @@ export interface QueryHistoryEntry {
     rowCount: number;
     success: boolean;
     error?: string;
+    userEmail?: string; // OPTIONAL: User who executed the query
 }
 
 export interface SavedQuery {
@@ -24,6 +25,7 @@ export interface SavedQuery {
     connectionId?: string;
     createdAt: string;
     updatedAt: string;
+    userEmail?: string; // OPTIONAL: User who created the query
 }
 
 // Query History Management
@@ -84,12 +86,36 @@ export function getQueryHistory(connectionId?: string, limit = 50): QueryHistory
     return filtered.slice(-limit).reverse();
 }
 
-export function clearQueryHistory(connectionId?: string) {
+export function getUserQueryHistory(userEmail: string, connectionId?: string, limit = 50): QueryHistoryEntry[] {
     const history = loadQueryHistory();
+
+    let filtered = history.filter(entry => entry.userEmail === userEmail);
     if (connectionId) {
-        queryHistory = history.filter(entry => entry.connectionId !== connectionId);
+        filtered = filtered.filter(entry => entry.connectionId === connectionId);
+    }
+
+    // Return most recent first
+    return filtered.slice(-limit).reverse();
+}
+
+export function clearQueryHistory(connectionId?: string, userEmail?: string) {
+    const history = loadQueryHistory();
+    if (userEmail) {
+        // Remove only entries for this user
+        if (connectionId) {
+            queryHistory = history.filter(entry =>
+                !(entry.userEmail === userEmail && entry.connectionId === connectionId)
+            );
+        } else {
+            queryHistory = history.filter(entry => entry.userEmail !== userEmail);
+        }
     } else {
-        queryHistory = [];
+        // Legacy/Admin behavior (clear all or by connection)
+        if (connectionId) {
+            queryHistory = history.filter(entry => entry.connectionId !== connectionId);
+        } else {
+            queryHistory = [];
+        }
     }
     saveQueryHistory();
 }
@@ -150,6 +176,17 @@ export function getSavedQueries(connectionId?: string): SavedQuery[] {
     }
 
     return queries;
+}
+
+export function getUserSavedQueries(userEmail: string, connectionId?: string): SavedQuery[] {
+    const queries = loadSavedQueries();
+
+    let filtered = queries.filter(q => q.userEmail === userEmail);
+    if (connectionId) {
+        filtered = filtered.filter(q => !q.connectionId || q.connectionId === connectionId);
+    }
+
+    return filtered;
 }
 
 export function updateSavedQuery(id: string, updates: Partial<Omit<SavedQuery, 'id' | 'createdAt'>>): SavedQuery | null {

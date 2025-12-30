@@ -54,11 +54,13 @@ export async function trackSchemaChange(
  * Parse SQL query to detect change type
  */
 export function parseQueryForChanges(query: string, affectedRows?: number): DatabaseChange | null {
-    const normalizedQuery = query.trim().toUpperCase();
+    // Remove comments and trim
+    const cleanQuery = query.replace(/\/\*[\s\S]*?\*\/|--.*?\n/g, '').trim();
+    const normalizedQuery = cleanQuery.toUpperCase();
 
-    // Schema changes
-    if (normalizedQuery.startsWith('CREATE TABLE')) {
-        const match = query.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"]?)(\w+)\1/i);
+    // Table Schema changes
+    if (normalizedQuery.includes('CREATE TABLE')) {
+        const match = cleanQuery.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"]?)(\w+)\1/i);
         const tableName = match ? match[2] : 'unknown';
         return {
             type: 'SCHEMA',
@@ -70,8 +72,8 @@ export function parseQueryForChanges(query: string, affectedRows?: number): Data
         };
     }
 
-    if (normalizedQuery.startsWith('ALTER TABLE')) {
-        const match = query.match(/ALTER\s+TABLE\s+([`"]?)(\w+)\1/i);
+    if (normalizedQuery.includes('ALTER TABLE')) {
+        const match = cleanQuery.match(/ALTER\s+TABLE\s+([`"]?)(\w+)\1/i);
         const tableName = match ? match[2] : 'unknown';
         return {
             type: 'SCHEMA',
@@ -83,8 +85,8 @@ export function parseQueryForChanges(query: string, affectedRows?: number): Data
         };
     }
 
-    if (normalizedQuery.startsWith('DROP TABLE')) {
-        const match = query.match(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([`"]?)(\w+)\1/i);
+    if (normalizedQuery.includes('DROP TABLE')) {
+        const match = cleanQuery.match(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([`"]?)(\w+)\1/i);
         const tableName = match ? match[2] : 'unknown';
         return {
             type: 'SCHEMA',
@@ -96,9 +98,36 @@ export function parseQueryForChanges(query: string, affectedRows?: number): Data
         };
     }
 
-    // Data changes
+    // Procedure/Function/View Schema changes
+    const procMatch = cleanQuery.match(/CREATE\s+(?:OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION|VIEW|ROUTINE)\s+([`"]?)(\w+)\2/i);
+    if (procMatch) {
+        const type = procMatch[1].toUpperCase();
+        const name = procMatch[3];
+        return {
+            type: 'SCHEMA',
+            operation: 'CREATE',
+            target: name,
+            description: `Create ${type.toLowerCase()} ${name}`,
+            query
+        };
+    }
+
+    const dropProcMatch = cleanQuery.match(/DROP\s+(PROCEDURE|FUNCTION|VIEW|ROUTINE)\s+(?:IF\s+EXISTS\s+)?([`"]?)(\w+)\2/i);
+    if (dropProcMatch) {
+        const type = dropProcMatch[1].toUpperCase();
+        const name = dropProcMatch[3];
+        return {
+            type: 'SCHEMA',
+            operation: 'DROP',
+            target: name,
+            description: `Drop ${type.toLowerCase()} ${name}`,
+            query
+        };
+    }
+
+    // Data changes (DML) - typically start with the keyword
     if (normalizedQuery.startsWith('INSERT INTO')) {
-        const match = query.match(/INSERT\s+INTO\s+([`"]?)(\w+)\1/i);
+        const match = cleanQuery.match(/INSERT\s+INTO\s+([`"]?)(\w+)\1/i);
         const tableName = match ? match[2] : 'unknown';
         return {
             type: 'DATA',
@@ -112,7 +141,7 @@ export function parseQueryForChanges(query: string, affectedRows?: number): Data
     }
 
     if (normalizedQuery.startsWith('UPDATE')) {
-        const match = query.match(/UPDATE\s+([`"]?)(\w+)\1/i);
+        const match = cleanQuery.match(/UPDATE\s+([`"]?)(\w+)\1/i);
         const tableName = match ? match[2] : 'unknown';
         return {
             type: 'DATA',
@@ -126,7 +155,7 @@ export function parseQueryForChanges(query: string, affectedRows?: number): Data
     }
 
     if (normalizedQuery.startsWith('DELETE FROM')) {
-        const match = query.match(/DELETE\s+FROM\s+([`"]?)(\w+)\1/i);
+        const match = cleanQuery.match(/DELETE\s+FROM\s+([`"]?)(\w+)\1/i);
         const tableName = match ? match[2] : 'unknown';
         return {
             type: 'DATA',
@@ -137,6 +166,49 @@ export function parseQueryForChanges(query: string, affectedRows?: number): Data
             query,
             affectedRows
         };
+    }
+
+    return null;
+}
+
+/**
+ * Generate inverse SQL to undo a change
+ */
+export function generateInverseSQL(change: DatabaseChange): string | null {
+    const { type, operation, target, query, tableName } = change;
+
+    if (type === 'SCHEMA') {
+        if (operation === 'CREATE') {
+            return `DROP TABLE IF EXISTS ${target};`;
+        }
+        if (operation === 'DROP') {
+            // We can't easily undo a DROP unless we have the original CREATE SQL
+            if (query && query.toUpperCase().includes('CREATE TABLE')) {
+                return query;
+            }
+            return null;
+        }
+        if (operation === 'ALTER') {
+            // ALTER is complex to undo without knowing the previous state
+            return null;
+        }
+    }
+
+    if (type === 'DATA') {
+        if (operation === 'INSERT') {
+            // For undoing an INSERT, we'd ideally need the PK values
+            // Currently, we don't track enough info for a surgical DELETE
+            // But if we have the tableName, we can provide a hint
+            return `-- Undo INSERT into ${tableName || target}\n-- DELETE FROM ${tableName || target} WHERE ...`;
+        }
+        if (operation === 'UPDATE') {
+            // Undo UPDATE requires the old values
+            return `-- Undo UPDATE to ${tableName || target}\n-- Old values were potentially lost if not in snapshot`;
+        }
+        if (operation === 'DELETE') {
+            // Undo DELETE is an INSERT (requires old values)
+            return `-- Undo DELETE from ${tableName || target}\n-- Re-inserting lost rows...`;
+        }
     }
 
     return null;

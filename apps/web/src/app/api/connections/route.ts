@@ -12,29 +12,23 @@ const activeConnections = new Map<string, string>(); // connectionId -> adapterI
 
 export async function GET(request: NextRequest) {
     try {
-        // Get user info from headers (simulating session for this simple implementation)
-        const userId = request.headers.get('x-user-id');
-        const userRole = request.headers.get('x-user-role');
+        // Get user email and org ID from headers (optional for backward compatibility)
+        const userEmail = request.headers.get('x-user-email');
+        const orgId = request.headers.get('x-org-id');
 
         let visibleConnections;
 
-        if (userRole === 'admin') {
-            // Admin sees all connections
-            visibleConnections = Array.from(connections.values());
-        } else if (userId) {
-            // Regular user sees owned + shared connections
-            visibleConnections = Array.from(connections.values()).filter(conn =>
-                conn.ownerId === userId ||
-                (conn.sharedWith && conn.sharedWith.includes(userId)) ||
-                // Fallback: If no owner/shared info (legacy), treat as public for now or hide?
-                // For backward compatibility, showing untagged connections might be safer 
-                // but strictly we should hide them. Let's show them for now to avoid breaking existing flow 
-                // until everything is migrated.
-                (!conn.ownerId && !conn.sharedWith?.length)
-            );
+        if (userEmail || orgId) {
+            // Filter connections: 
+            // 1. Owned by user (userEmail matches)
+            // 2. Shared with organization (organizationId matches)
+            visibleConnections = Array.from(connections.values()).filter(conn => {
+                const isOwner = userEmail && conn.userEmail === userEmail;
+                const isOrgShared = orgId && conn.organizationId === orgId;
+                return isOwner || isOrgShared;
+            });
         } else {
-            // No user info? Fallback to all for backward compat or empty?
-            // Let's fallback to all for now to not break existing "Guest" flow if any
+            // Backward compatibility: show all connections if no context provided
             visibleConnections = Array.from(connections.values());
         }
 
@@ -47,7 +41,8 @@ export async function GET(request: NextRequest) {
                 port: conn.port,
                 database: conn.database,
                 readOnly: conn.readOnly,
-                ownerId: conn.ownerId,
+                userEmail: conn.userEmail,
+                organizationId: conn.organizationId,
                 status: activeConnections.has(conn.id) ? 'connected' : 'disconnected',
             })),
         });
@@ -59,6 +54,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
+        const userEmail = request.headers.get('x-user-email') || 'guest';
+        const orgId = request.headers.get('x-org-id');
+
         const body = await request.json();
         const { name, type, host, port, database, username, password, ssl, readOnly, skipTest } = body;
 
@@ -111,8 +109,8 @@ export async function POST(request: NextRequest) {
             database,
             credentials: encryptedCredentials,
             readOnly: config.readOnly,
-            ownerId: body.userId || 'admin', // Default to admin if not provided
-            sharedWith: [], // Initial shared users list
+            userEmail: userEmail, // Store user email as owner
+            organizationId: orgId, // Store organization ID for sharing
             createdAt: new Date().toISOString(),
         };
 
@@ -121,7 +119,7 @@ export async function POST(request: NextRequest) {
         // Persist to file
         saveConnections();
 
-        logger.info(`Connection created: ${connectionId} (${type}://${host}:${port}/${database})`);
+        logger.info(`Connection created: ${connectionId} (${type}://${host}:${port}/${database}) by ${userEmail}`);
 
         // Return connection without credentials
         return NextResponse.json({
@@ -138,6 +136,55 @@ export async function POST(request: NextRequest) {
         logger.error('Failed to create connection', error);
         return NextResponse.json(
             { error: 'Failed to create connection', message: error.message },
+            { status: 500 }
+        );
+    }
+}
+
+export async function DELETE(request: NextRequest) {
+    try {
+        const userEmail = request.headers.get('x-user-email');
+
+        if (!userEmail) {
+            return NextResponse.json({ error: 'User email required' }, { status: 401 });
+        }
+
+        const { searchParams } = new URL(request.url);
+        const connectionId = searchParams.get('id');
+
+        if (!connectionId) {
+            return NextResponse.json({ error: 'Connection ID required' }, { status: 400 });
+        }
+
+        const connection = connections.get(connectionId);
+
+        if (!connection) {
+            return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+        }
+
+        // Verify user owns this connection
+        if (connection.userEmail !== userEmail) {
+            return NextResponse.json({ error: 'Not authorized to delete this connection' }, { status: 403 });
+        }
+
+        // Delete the connection
+        connections.delete(connectionId);
+
+        // Close active connection if exists
+        if (activeConnections.has(connectionId)) {
+            activeConnections.delete(connectionId);
+        }
+
+        // Persist changes
+        saveConnections();
+
+        logger.info(`Connection deleted: ${connectionId} by ${userEmail}`);
+
+        return NextResponse.json({ success: true, message: 'Connection deleted successfully' });
+    } catch (error: any) {
+        logger.error('Failed to delete connection', error);
+        return NextResponse.json(
+            { error: 'Failed to delete connection', message: error.message },
             { status: 500 }
         );
     }

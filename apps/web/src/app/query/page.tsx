@@ -4,12 +4,21 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Editor from '@monaco-editor/react';
 import { useTheme } from 'next-themes';
-import { Play, Save, Download, Clock, Table as TableIcon, Database, ChevronRight, ChevronDown, GitBranch, Plus as PlusIcon } from 'lucide-react';
+import { Play, Save, Download, Clock, Table as TableIcon, Database, ChevronRight, ChevronDown, GitBranch, Plus as PlusIcon, FileCode, Wand2, FileSearch, FileStack, Upload, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { trackChange, parseQueryForChanges, getPendingChanges } from '@/lib/vcs-helper';
 import { extractTableName } from '@/lib/sql-helper';
+import { formatSQL, getDialectFromDbType, getExplainPrefix } from '@/lib/sql-formatter';
 import TableDesigner from '@/components/schema/TableDesigner';
+import { SaveQueryModal } from '@/components/SaveQueryModal';
+import { ExportModal } from '@/components/ExportModal';
+import { ImportModal } from '@/components/ImportModal';
+import { SQLTemplateModal } from '@/components/SQLTemplateModal';
+import { TableContextMenu } from '@/components/TableContextMenu';
+import { QueryPlanViewer } from '@/components/QueryPlanViewer';
+import { ResultsToolbar } from '@/components/ResultsToolbar';
 import { DataEditor } from '@/components/DataEditor';
+import { AIAssistantPanel } from '@/components/AIAssistantPanel';
 
 // Define QueryResult interface
 interface QueryResult {
@@ -174,9 +183,105 @@ function QueryPageContent() {
     const [schemas, setSchemas] = useState<any[]>([]);
     const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set(['public']));
     const [schemaTables, setSchemaTables] = useState<Map<string, TableInfo[]>>(new Map());
+    const [schemaProcedures, setSchemaProcedures] = useState<Map<string, any[]>>(new Map());
     const [pendingChanges, setPendingChanges] = useState<number>(0);
     const [editorRef, setEditorRef] = useState<any>(null);
     const [showTableDesigner, setShowTableDesigner] = useState(false);
+    const [showSaveModal, setShowSaveModal] = useState(false);
+    const [showExportModal, setShowExportModal] = useState(false);
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [showTemplates, setShowTemplates] = useState(false);
+    const [showQueryPlan, setShowQueryPlan] = useState(false);
+    const [queryPlan, setQueryPlan] = useState<any>(null);
+    const [filteredResults, setFilteredResults] = useState<any[]>([]);
+    const [contextMenu, setContextMenu] = useState<{
+        x: number;
+        y: number;
+        tableName: string;
+        schemaName: string;
+    } | null>(null);
+    const [importTable, setImportTable] = useState<{ name: string; schema: string } | null>(null);
+
+    // Loading states map: schemaName -> { tables: boolean, procedures: boolean }
+    const [loadingResources, setLoadingResources] = useState<Map<string, { tables: boolean; procedures: boolean }>>(new Map());
+    const [resourceErrors, setResourceErrors] = useState<Map<string, string>>(new Map());
+
+    const updateLoading = (schema: string, type: 'tables' | 'procedures', isLoading: boolean) => {
+        setLoadingResources(prev => {
+            const next = new Map(prev);
+            const current = next.get(schema) || { tables: false, procedures: false };
+            next.set(schema, { ...current, [type]: isLoading });
+            return next;
+        });
+    };
+
+    const handleRefresh = async () => {
+        setSchemas([]);
+        setSchemaTables(new Map());
+        setSchemaProcedures(new Map());
+        setExpandedSchemas(new Set());
+        setLoadingResources(new Map());
+        setResourceErrors(new Map());
+        await fetchSchemas();
+        await loadPendingChanges();
+    };
+
+    // Format SQL handler
+    const handleFormatSQL = () => {
+        if (!query.trim() || !connectionInfo) return;
+        const dialect = getDialectFromDbType(connectionInfo.type);
+        const formatted = formatSQL(query, { dialect });
+        setQuery(formatted);
+    };
+
+    // Explain Query handler
+    const handleExplainQuery = async () => {
+        if (!connectionId || !query.trim() || !connectionInfo) return;
+
+        setExecuting(true);
+        setError('');
+
+        try {
+            const explainPrefix = getExplainPrefix(connectionInfo.type);
+            const explainQuery = explainPrefix + query.trim().replace(/;$/, '');
+
+            const res = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    connectionId,
+                    query: explainQuery,
+                    timeout: 30000,
+                    maxRows: 1000,
+                }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(data.error || 'EXPLAIN failed');
+            }
+
+            // Parse the plan from result
+            let plan = data.rows;
+            if (connectionInfo.type === 'postgresql' && data.rows?.[0]?.['QUERY PLAN']) {
+                plan = data.rows[0]['QUERY PLAN'];
+            }
+
+            setQueryPlan(plan);
+            setShowQueryPlan(true);
+        } catch (err: any) {
+            setError(`EXPLAIN failed: ${err.message}`);
+        } finally {
+            setExecuting(false);
+        }
+    };
+
+    // Handle table right-click
+    const handleTableContextMenu = (e: React.MouseEvent, tableName: string, schemaName: string) => {
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY, tableName, schemaName });
+    };
 
 
 
@@ -216,12 +321,32 @@ function QueryPageContent() {
     };
 
     const fetchTables = async (schemaName: string) => {
+        updateLoading(schemaName, 'tables', true);
         try {
             const res = await fetch(`/api/tables?connectionId=${connectionId}&schema=${schemaName}`);
             const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to fetch tables');
             setSchemaTables(prev => new Map(prev).set(schemaName, data.tables || []));
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to fetch tables:', err);
+            setResourceErrors(prev => new Map(prev).set(`${schemaName}:tables`, err.message));
+        } finally {
+            updateLoading(schemaName, 'tables', false);
+        }
+    };
+
+    const fetchProcedures = async (schemaName: string) => {
+        updateLoading(schemaName, 'procedures', true);
+        try {
+            const res = await fetch(`/api/procedures?connectionId=${connectionId}&schema=${schemaName}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to fetch procedures');
+            setSchemaProcedures(prev => new Map(prev).set(schemaName, data.procedures || []));
+        } catch (err: any) {
+            console.error('Failed to fetch procedures:', err);
+            setResourceErrors(prev => new Map(prev).set(`${schemaName}:procedures`, err.message));
+        } finally {
+            updateLoading(schemaName, 'procedures', false);
         }
     };
 
@@ -231,9 +356,12 @@ function QueryPageContent() {
             newExpanded.delete(schemaName);
         } else {
             newExpanded.add(schemaName);
-            // Fetch tables if not already loaded
+            // Fetch tables and procedures if not already loaded
             if (!schemaTables.has(schemaName)) {
-                await fetchTables(schemaName);
+                fetchTables(schemaName);
+            }
+            if (!schemaProcedures.has(schemaName)) {
+                fetchProcedures(schemaName);
             }
         }
         setExpandedSchemas(newExpanded);
@@ -369,15 +497,24 @@ function QueryPageContent() {
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="font-semibold flex items-center gap-2">
                             <TableIcon className="w-4 h-4" />
-                            Database Explorer
+                            Explorer
                         </h3>
-                        <button
-                            onClick={() => setShowTableDesigner(true)}
-                            className="p-1 hover:bg-accent rounded text-primary"
-                            title="Create New Table"
-                        >
-                            <PlusIcon className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={handleRefresh}
+                                className="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition"
+                                title="Refresh Explorer"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setShowTableDesigner(true)}
+                                className="p-1 hover:bg-accent rounded text-primary"
+                                title="Create New Table"
+                            >
+                                <PlusIcon className="w-4 h-4" />
+                            </button>
+                        </div>
                     </div>
                     <div className="space-y-1">
                         {schemas.length === 0 ? (
@@ -403,26 +540,55 @@ function QueryPageContent() {
 
                                     {expandedSchemas.has(schema.name) && (
                                         <div className="ml-6 mt-1 space-y-0.5">
-                                            {schemaTables.get(schema.name)?.map((table) => (
-                                                <button
-                                                    key={table.name}
-                                                    onClick={() => setQuery(`SELECT * FROM ${schema.name}.${table.name} LIMIT 100;`)}
-                                                    className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
-                                                    title={`Click to query ${table.name}`}
-                                                >
-                                                    <TableIcon className="w-3 h-3 text-muted-foreground" />
-                                                    <span className="text-xs">{table.name}</span>
-                                                    {table.type && (
-                                                        <span className="text-xs text-muted-foreground ml-auto">
-                                                            {table.type === 'BASE TABLE' ? 'T' : 'V'}
-                                                        </span>
-                                                    )}
-                                                </button>
-                                            )) || (
-                                                    <div className="px-2 py-1 text-xs text-muted-foreground">
-                                                        Loading tables...
-                                                    </div>
-                                                )}
+                                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 mt-2">Tables</div>
+
+                                            {loadingResources.get(schema.name)?.tables ? (
+                                                <div className="px-2 py-1 text-xs text-muted-foreground">Loading tables...</div>
+                                            ) : resourceErrors.get(`${schema.name}:tables`) ? (
+                                                <div className="px-2 py-1 text-xs text-destructive/80" title={resourceErrors.get(`${schema.name}:tables`)}>Error loading tables</div>
+                                            ) : schemaTables.get(schema.name)?.length === 0 ? (
+                                                <div className="px-2 py-1 text-xs text-muted-foreground italic">No tables</div>
+                                            ) : (
+                                                schemaTables.get(schema.name)?.map((table) => (
+                                                    <button
+                                                        key={table.name}
+                                                        onClick={() => setQuery(`SELECT * FROM ${schema.name}.${table.name} LIMIT 100;`)}
+                                                        onContextMenu={(e) => handleTableContextMenu(e, table.name, schema.name)}
+                                                        className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
+                                                        title={`Click to query, right-click for options`}
+                                                    >
+                                                        <TableIcon className="w-3 h-3 text-muted-foreground" />
+                                                        <span className="text-xs">{table.name}</span>
+                                                        {table.type && (
+                                                            <span className="text-xs text-muted-foreground ml-auto">
+                                                                {table.type === 'BASE TABLE' ? 'T' : 'V'}
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                ))
+                                            )}
+
+                                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 mt-2">Procedures</div>
+
+                                            {loadingResources.get(schema.name)?.procedures ? (
+                                                <div className="px-2 py-1 text-xs text-muted-foreground">Loading procedures...</div>
+                                            ) : resourceErrors.get(`${schema.name}:procedures`) ? (
+                                                <div className="px-2 py-1 text-xs text-destructive/80" title={resourceErrors.get(`${schema.name}:procedures`)}>Error loading procedures</div>
+                                            ) : schemaProcedures.get(schema.name)?.length === 0 ? (
+                                                <div className="px-2 py-1 text-xs text-muted-foreground italic">No procedures</div>
+                                            ) : (
+                                                schemaProcedures.get(schema.name)?.map((proc) => (
+                                                    <button
+                                                        key={proc.name}
+                                                        onClick={() => setQuery(`CALL ${schema.name}.${proc.name}();`)}
+                                                        className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
+                                                        title={`Click to call ${proc.name}`}
+                                                    >
+                                                        <FileCode className="w-3 h-3 text-blue-400" />
+                                                        <span className="text-xs">{proc.name}</span>
+                                                    </button>
+                                                ))
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -452,19 +618,53 @@ function QueryPageContent() {
                     )}
 
                     {/* Toolbar */}
-                    <div className="border-b border-border p-4 flex items-center gap-4">
+                    <div className="border-b border-border p-4 flex items-center gap-2 flex-wrap">
                         <button
                             onClick={executeQuery}
                             disabled={executing || !query.trim()}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition disabled:opacity-50 flex items-center gap-2"
                         >
                             <Play className="w-4 h-4" />
-                            {executing ? 'Executing...' : 'Run Query'}
+                            {executing ? 'Executing...' : 'Run'}
                         </button>
 
                         <button
-                            className="px-4 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
-                            disabled
+                            onClick={handleExplainQuery}
+                            disabled={executing || !query.trim()}
+                            className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
+                            title="Explain Query Plan"
+                        >
+                            <FileSearch className="w-4 h-4" />
+                            Explain
+                        </button>
+
+                        <div className="w-px h-6 bg-border" />
+
+                        <button
+                            onClick={handleFormatSQL}
+                            disabled={!query.trim()}
+                            className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
+                            title="Format SQL"
+                        >
+                            <Wand2 className="w-4 h-4" />
+                            Format
+                        </button>
+
+                        <button
+                            onClick={() => setShowTemplates(true)}
+                            className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
+                            title="SQL Templates"
+                        >
+                            <FileStack className="w-4 h-4" />
+                            Templates
+                        </button>
+
+                        <div className="w-px h-6 bg-border" />
+
+                        <button
+                            className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
+                            onClick={() => setShowSaveModal(true)}
+                            disabled={!query.trim()}
                         >
                             <Save className="w-4 h-4" />
                             Save
@@ -472,20 +672,20 @@ function QueryPageContent() {
 
                         {result && result.rows.length > 0 && (
                             <button
-                                onClick={exportToCSV}
-                                className="px-4 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
+                                onClick={() => setShowExportModal(true)}
+                                className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
                             >
                                 <Download className="w-4 h-4" />
-                                Export CSV
+                                Export
                             </button>
                         )}
 
                         <Link
                             href={`/version-control?connection=${connectionId}`}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition flex items-center gap-2 relative"
+                            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition flex items-center gap-2 relative"
                         >
                             <GitBranch className="w-4 h-4" />
-                            Version Control
+                            VCS
                             {pendingChanges > 0 && (
                                 <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
                                     {pendingChanges}
@@ -552,45 +752,53 @@ function QueryPageContent() {
                                         Query executed successfully but returned no rows
                                     </div>
                                 ) : (
-                                    <div className="h-[500px]">
-                                        <DataEditor
-                                            rows={result.rows}
-                                            fields={result.fields}
-                                            onSave={async (updates: Array<{ rowIndex: number; field: string; oldValue: any; newValue: any }>) => {
-                                                try {
-                                                    const res = await fetch('/api/data/update', {
-                                                        method: 'POST',
-                                                        headers: { 'Content-Type': 'application/json' },
-                                                        body: JSON.stringify({
-                                                            connectionId,
-                                                            schema: 'public', // TODO: Get detailed schema info
-                                                            table: extractTableName(query) || 'users',
-                                                            updates
-                                                        })
-                                                    });
-
-                                                    const data = await res.json();
-                                                    if (res.ok) {
-                                                        // Refresh query
-                                                        executeQuery();
-                                                        // Add pending VCS change
-                                                        await trackChange(connectionId!, {
-                                                            type: 'DATA',
-                                                            operation: 'UPDATE',
-                                                            target: 'table_name', // Needs proper parsing
-                                                            description: `Direct edit of ${updates.length} rows`,
-                                                            query: 'UPDATE ... (batch direct edit)'
-                                                        });
-                                                        loadPendingChanges();
-                                                    } else {
-                                                        alert(`Update failed: ${data.error}`);
-                                                    }
-                                                } catch (e) {
-                                                    console.error(e);
-                                                    alert('Save failed');
-                                                }
-                                            }}
+                                    <div className="border border-border rounded-lg overflow-hidden">
+                                        <ResultsToolbar
+                                            data={result.rows}
+                                            columns={result.fields.map(f => f.name)}
+                                            onFilteredDataChange={setFilteredResults}
+                                            onExport={() => setShowExportModal(true)}
                                         />
+                                        <div className="h-[500px]">
+                                            <DataEditor
+                                                rows={result.rows}
+                                                fields={result.fields}
+                                                onSave={async (updates: Array<{ rowIndex: number; field: string; oldValue: any; newValue: any }>) => {
+                                                    try {
+                                                        const res = await fetch('/api/data/update', {
+                                                            method: 'POST',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({
+                                                                connectionId,
+                                                                schema: 'public', // TODO: Get detailed schema info
+                                                                table: extractTableName(query) || 'users',
+                                                                updates
+                                                            })
+                                                        });
+
+                                                        const data = await res.json();
+                                                        if (res.ok) {
+                                                            // Refresh query
+                                                            executeQuery();
+                                                            // Add pending VCS change
+                                                            await trackChange(connectionId!, {
+                                                                type: 'DATA',
+                                                                operation: 'UPDATE',
+                                                                target: 'table_name', // Needs proper parsing
+                                                                description: `Direct edit of ${updates.length} rows`,
+                                                                query: 'UPDATE ... (batch direct edit)'
+                                                            });
+                                                            loadPendingChanges();
+                                                        } else {
+                                                            alert(`Update failed: ${data.error}`);
+                                                        }
+                                                    } catch (e) {
+                                                        console.error(e);
+                                                        alert('Save failed');
+                                                    }
+                                                }}
+                                            />
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -598,7 +806,7 @@ function QueryPageContent() {
 
                         {!result && !error && (
                             <div className="text-center py-12 text-muted-foreground">
-                                Write a query and click "Run Query" to execute
+                                Write a query and click "Run" to execute
                             </div>
                         )}
                     </div>
@@ -612,6 +820,93 @@ function QueryPageContent() {
                     onSuccess={() => {
                         setShowTableDesigner(false);
                         fetchSchemas(); // Refresh schema list
+                    }}
+                />
+            )}
+            {/* Save Query Modal */}
+            {showSaveModal && connectionId && (
+                <SaveQueryModal
+                    query={query}
+                    connectionId={connectionId}
+                    onClose={() => setShowSaveModal(false)}
+                    onSuccess={() => setShowSaveModal(false)}
+                />
+            )}
+
+            {/* Export Modal */}
+            {showExportModal && result && (
+                <ExportModal
+                    data={filteredResults.length > 0 ? filteredResults : result.rows}
+                    columns={result.fields.map(f => f.name)}
+                    tableName={`query-result-${Date.now()}`}
+                    onClose={() => setShowExportModal(false)}
+                />
+            )}
+
+            {/* Import Modal */}
+            {showImportModal && importTable && connectionId && (
+                <ImportModal
+                    tableName={`${importTable.schema}.${importTable.name}`}
+                    connectionId={connectionId}
+                    onClose={() => {
+                        setShowImportModal(false);
+                        setImportTable(null);
+                    }}
+                    onSuccess={() => {
+                        setShowImportModal(false);
+                        setImportTable(null);
+                    }}
+                />
+            )}
+
+            {/* SQL Templates Modal */}
+            {showTemplates && (
+                <SQLTemplateModal
+                    onSelect={(sql) => setQuery(sql)}
+                    onClose={() => setShowTemplates(false)}
+                />
+            )}
+
+            {/* Query Plan Viewer */}
+            {showQueryPlan && queryPlan && connectionInfo && (
+                <QueryPlanViewer
+                    plan={queryPlan}
+                    executionTime={result?.executionTime}
+                    dbType={connectionInfo.type}
+                    onClose={() => setShowQueryPlan(false)}
+                />
+            )}
+
+            {/* Table Context Menu */}
+            {contextMenu && (
+                <TableContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    tableName={contextMenu.tableName}
+                    schemaName={contextMenu.schemaName}
+                    onClose={() => setContextMenu(null)}
+                    onSelectQuery={(sql) => setQuery(sql)}
+                    onImport={() => {
+                        setImportTable({ name: contextMenu.tableName, schema: contextMenu.schemaName });
+                        setShowImportModal(true);
+                        setContextMenu(null);
+                    }}
+                />
+            )}
+
+            {/* AI SQL Assistant */}
+            {connectionId && connectionInfo && (
+                <AIAssistantPanel
+                    connectionId={connectionId}
+                    connectionInfo={connectionInfo}
+                    schemas={schemas.map(s => s.name)}
+                    tables={Array.from(schemaTables.entries()).flatMap(([schema, tables]) =>
+                        tables.map(t => ({ schema, name: t.name }))
+                    )}
+                    onInsertQuery={(sql) => setQuery(sql)}
+                    onRunQuery={(sql) => {
+                        setQuery(sql);
+                        setTimeout(() => executeQuery(), 100);
                     }}
                 />
             )}
