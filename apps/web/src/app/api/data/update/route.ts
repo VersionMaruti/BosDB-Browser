@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connections } from '@/lib/store';
+import { getConnection, adapterInstances } from '@/lib/store';
 import { getConnectedAdapter } from '@/lib/db-utils';
 import { generateUpdateStatement } from '@/lib/sql-helper';
 
 export async function POST(request: NextRequest) {
-    // Fix for table_catalog error
     try {
         const body = await request.json();
         const { connectionId, schema, table, updates } = body;
@@ -14,13 +13,20 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
         }
 
-        const connection = connections.get(connectionId);
+        const connection = await getConnection(connectionId);
         if (!connection) {
             return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
         }
 
         // Get adapter instance
         const adapter = await getConnectedAdapter(connectionId);
+
+        // Get the adapter's internal connection ID
+        const adapterInfo = adapterInstances.get(connectionId);
+        if (!adapterInfo) {
+            return NextResponse.json({ error: 'Adapter connection not found' }, { status: 500 });
+        }
+        const adapterConnectionId = adapterInfo.adapterConnectionId;
 
         const results = [];
         const errors = [];
@@ -35,10 +41,9 @@ export async function POST(request: NextRequest) {
                 // Generate SQL
                 const sql = generateUpdateStatement(schema, table, primaryKey, changes, connection.type);
 
-                // Execute
-                // We reuse the executeQuery method from the adapter
+                // Execute with the correct adapter connection ID
                 await adapter.executeQuery({
-                    connectionId,
+                    connectionId: adapterConnectionId,
                     query: sql
                 });
 
@@ -71,4 +76,5 @@ export async function POST(request: NextRequest) {
         console.error('Batch update error:', error);
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
+}
 }
