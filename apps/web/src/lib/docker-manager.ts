@@ -24,6 +24,7 @@ export interface DockerDatabase {
     status: 'running' | 'stopped' | 'error';
     autoStart: boolean;
     createdAt: string;
+    lastUsedAt?: string; // Track last activity for auto-sleep
     organizationId: string;
     containerId?: string;
 }
@@ -42,6 +43,12 @@ const PORT_RANGES: Record<string, number> = {
     elasticsearch: 9200,
     clickhouse: 8123,
     influxdb: 8086,
+    firebird: 3050,
+    cubrid: 33000,
+    couchbase: 8091,
+    orientdb: 2424,
+    rabbitmq: 5672,
+    minio: 9000
 };
 
 // Default docker images for database types
@@ -70,6 +77,13 @@ const DOCKER_IMAGES: Record<string, string> = {
     rabbitmq: 'rabbitmq:3-management-alpine',
     minio: 'minio/minio:latest',
     surrealdb: 'surrealdb/surrealdb:latest',
+    oracle: 'gvenzl/oracle-free:latest',
+    firebird: 'jacobalberty/firebird:latest',
+    cubrid: 'cubrid/cubrid:latest',
+    h2: 'oscarfonts/h2:latest',
+    couchbase: 'couchbase:latest',
+    orientdb: 'orientdb:3.2',
+    prometheus: 'prom/prometheus:latest'
 };
 
 /**
@@ -242,6 +256,24 @@ function getEnvironmentVariables(type: DatabaseType, credentials: any): string[]
                 `MINIO_ROOT_USER=${username}`,
                 `MINIO_ROOT_PASSWORD=${password}`,
             ];
+        case 'oracle':
+            return [
+                `ORACLE_PASSWORD=${password}`,
+                `ORACLE_DATABASE=${database}`,
+            ];
+        case 'firebird':
+            return [
+                `ISC_PASSWORD=${password}`,
+            ];
+        case 'couchbase':
+            return [
+                `COUCHBASE_ADMINISTRATOR_USERNAME=${username}`,
+                `COUCHBASE_ADMINISTRATOR_PASSWORD=${password}`,
+            ];
+        case 'orientdb':
+            return [
+                `ORIENTDB_ROOT_PASSWORD=${password}`,
+            ];
         default:
             return [];
     }
@@ -254,30 +286,66 @@ export async function pullAndStartDatabase(
     type: DatabaseType,
     name: string,
     organizationId: string,
-    autoStart: boolean = true
+    autoStart: boolean = true,
+    signal?: AbortSignal
 ): Promise<DockerDatabase> {
     const image = DOCKER_IMAGES[type];
     if (!image) {
         throw new Error(`Unsupported database type: ${type}`);
     }
 
-    console.log(`[Docker] Pulling image ${image}...`);
+    if (signal?.aborted) {
+        throw new Error('Provisioning cancelled');
+    }
 
-    // Pull the image
-    await new Promise<void>((resolve, reject) => {
-        docker.pull(image, (err: any, stream: any) => {
-            if (err) {
-                reject(err);
-                return;
+    console.log(`[Docker] Checking if image ${image} exists localy...`);
+    const images = await docker.listImages();
+    const imageExists = images.some(img => img.RepoTags?.includes(image));
+
+    if (!imageExists) {
+        console.log(`[Docker] Pulling image ${image}...`);
+
+        // Pull the image
+        await new Promise<void>((resolve, reject) => {
+            let pullStream: any;
+
+            const abortHandler = () => {
+                if (pullStream && pullStream.destroy) {
+                    pullStream.destroy();
+                }
+                reject(new Error('Provisioning cancelled'));
+            };
+
+            if (signal) {
+                signal.addEventListener('abort', abortHandler);
             }
-            docker.modem.followProgress(stream, (err: any) => {
-                if (err) reject(err);
-                else resolve();
+
+            docker.pull(image, (err: any, stream: any) => {
+                if (err) {
+                    if (signal) signal.removeEventListener('abort', abortHandler);
+                    reject(err);
+                    return;
+                }
+                pullStream = stream;
+                docker.modem.followProgress(stream, (err: any) => {
+                    if (signal) signal.removeEventListener('abort', abortHandler);
+                    if (err) {
+                        if (signal?.aborted) reject(new Error('Provisioning cancelled'));
+                        else reject(err);
+                    }
+                    else resolve();
+                });
             });
         });
-    });
 
-    console.log(`[Docker] Image ${image} pulled successfully`);
+        if (signal?.aborted) {
+            throw new Error('Provisioning cancelled');
+        }
+
+        console.log(`[Docker] Image ${image} pulled successfully`);
+    } else {
+        console.log(`[Docker] Image ${image} already exists, skipping pull`);
+    }
 
     // Generate database ID and credentials
     const id = `${type}_${name}_${Date.now()}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
@@ -341,6 +409,7 @@ export async function pullAndStartDatabase(
         status: autoStart ? 'running' : 'stopped',
         autoStart,
         createdAt: new Date().toISOString(),
+        lastUsedAt: new Date().toISOString(), // Initialize activity
         organizationId,
         containerId,
     };
@@ -373,8 +442,9 @@ export async function startDatabase(id: string, organizationId: string): Promise
     const container = docker.getContainer(database.containerId);
     await container.start();
 
-    // Update status
+    // Update status and activity
     database.status = 'running';
+    database.lastUsedAt = new Date().toISOString();
     saveDockerDatabases(organizationId, databases);
 
     console.log(`[Docker] Database ${id} started`);
@@ -468,4 +538,82 @@ export async function syncDatabaseStatus(organizationId: string): Promise<void> 
     if (updated) {
         saveDockerDatabases(organizationId, databases);
     }
+}
+
+/**
+ * Update the last used timestamp for a database by its port
+ */
+export async function updateDatabaseActivity(port: number): Promise<void> {
+    const databases = getAllDockerDatabases();
+    const db = databases.find(d => d.port === port);
+
+    if (db) {
+        db.lastUsedAt = new Date().toISOString();
+        // We need to find which org it belongs to for saving
+        const orgDatabases = loadDockerDatabases(db.organizationId);
+        const orgDb = orgDatabases.find(d => d.id === db.id);
+        if (orgDb) {
+            orgDb.lastUsedAt = db.lastUsedAt;
+            saveDockerDatabases(db.organizationId, orgDatabases);
+        }
+    }
+}
+
+/**
+ * Ensure a database is started if it's currently stopped
+ */
+export async function ensureDatabaseStarted(port: number): Promise<void> {
+    const databases = getAllDockerDatabases();
+    const db = databases.find(d => d.port === port);
+
+    if (db && db.status === 'stopped' && db.containerId) {
+        console.log(`[Docker] Auto-awakening database ${db.id} on port ${db.port}...`);
+        await startDatabase(db.id, db.organizationId);
+        // Wait a bit for the DB to be ready
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+}
+
+/**
+ * Background check for idle databases to stop them (Auto-Sleep)
+ */
+let idleCheckInterval: NodeJS.Timeout | null = null;
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+export function startIdleTimeoutCheck() {
+    if (idleCheckInterval) return;
+
+    console.log('[Docker] Starting background idle timeout check (10 min)...');
+    idleCheckInterval = setInterval(async () => {
+        const databases = getAllDockerDatabases();
+        const now = Date.now();
+
+        for (const db of databases) {
+            if (db.status === 'running' && db.lastUsedAt && db.containerId) {
+                const lastUsed = new Date(db.lastUsedAt).getTime();
+                if (now - lastUsed > IDLE_TIMEOUT_MS) {
+                    console.log(`[Docker] Database ${db.id} on port ${db.port} is idle for >10m. Sleeping...`);
+                    try {
+                        await stopDatabase(db.id, db.organizationId);
+                    } catch (error) {
+                        console.error(`[Docker] Failed to auto-sleep database ${db.id}:`, error);
+                    }
+                }
+            } else if (db.status === 'running' && !db.lastUsedAt) {
+                // Initialize lastUsedAt if missing so it can eventually sleep
+                db.lastUsedAt = new Date().toISOString();
+                const orgDatabases = loadDockerDatabases(db.organizationId);
+                const orgDb = orgDatabases.find(d => d.id === db.id);
+                if (orgDb) {
+                    orgDb.lastUsedAt = db.lastUsedAt;
+                    saveDockerDatabases(db.organizationId, orgDatabases);
+                }
+            }
+        }
+    }, 60000); // Check every minute
+}
+
+// Start the check automatically
+if (typeof window === 'undefined') {
+    startIdleTimeoutCheck();
 }

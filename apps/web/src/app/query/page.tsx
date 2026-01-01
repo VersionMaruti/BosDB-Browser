@@ -6,7 +6,7 @@ import Editor from '@monaco-editor/react';
 import { useTheme } from 'next-themes';
 import { Play, Save, Download, Clock, Table as TableIcon, Database, ChevronRight, ChevronDown, GitBranch, Plus as PlusIcon, FileCode, Wand2, FileSearch, FileStack, Upload, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
-import { trackChange, parseQueryForChanges, getPendingChanges } from '@/lib/vcs-helper';
+import { trackChange, parseQueryForChanges, getPendingChanges, generateRollbackSQL } from '@/lib/vcs-helper';
 import { extractTableName } from '@/lib/sql-helper';
 import { formatSQL, getDialectFromDbType, getExplainPrefix } from '@/lib/sql-formatter';
 import TableDesigner from '@/components/schema/TableDesigner';
@@ -25,6 +25,7 @@ interface QueryResult {
     success: boolean;
     rows: any[];
     fields: { name: string; dataType: string }[];
+    columnNames: string[]; // Stable list of column names
     rowCount: number;
     executionTime: number;
     hasMore?: boolean;
@@ -175,7 +176,7 @@ function QueryPageContent() {
     const { theme } = useTheme();
 
     const [query, setQuery] = useState('SELECT * FROM information_schema.tables LIMIT 10;');
-    const [result, setResult] = useState<QueryResult | null>(null);
+    const [results, setResults] = useState<QueryResult[]>([]);
     const [executing, setExecuting] = useState(false);
     const [error, setError] = useState('');
     const [warning, setWarning] = useState('');
@@ -193,7 +194,7 @@ function QueryPageContent() {
     const [showTemplates, setShowTemplates] = useState(false);
     const [showQueryPlan, setShowQueryPlan] = useState(false);
     const [queryPlan, setQueryPlan] = useState<any>(null);
-    const [filteredResults, setFilteredResults] = useState<any[]>([]);
+    const [filteredResults, setFilteredResults] = useState<Map<number, any[]>>(new Map());
     const [contextMenu, setContextMenu] = useState<{
         x: number;
         y: number;
@@ -201,13 +202,14 @@ function QueryPageContent() {
         schemaName: string;
     } | null>(null);
     const [importTable, setImportTable] = useState<{ name: string; schema: string } | null>(null);
+    const [exportingIndex, setExportingIndex] = useState<number>(0);
 
     // Loading states map: schemaName -> { tables: boolean, procedures: boolean }
     const [loadingResources, setLoadingResources] = useState<Map<string, { tables: boolean; procedures: boolean }>>(new Map());
     const [resourceErrors, setResourceErrors] = useState<Map<string, string>>(new Map());
 
-    // Memoize columns to prevent infinite loop in ResultsToolbar
-    const columns = useMemo(() => result ? result.fields.map(f => f.name) : [], [result]);
+    // Memoize columns for the first result (fallback)
+    const columns = useMemo(() => results.length > 0 ? results[0].fields.map(f => f.name) : [], [results]);
 
     const updateLoading = (schema: string, type: 'tables' | 'procedures', isLoading: boolean) => {
         setLoadingResources(prev => {
@@ -370,81 +372,156 @@ function QueryPageContent() {
         setExpandedSchemas(newExpanded);
     };
 
-    const executeQuery = useCallback(async () => {
-        if (!connectionId || !query.trim()) {
-            return;
-        }
+    const executeQuery = useCallback(async (customQuery?: string) => {
+        if (!connectionId) return;
 
-        // Get selected text from editor, or use full query
-        let queryToExecute = query.trim();
-        if (editorRef) {
+        // Use custom query, selected text, or full text
+        let rawQuery = (customQuery || query).trim();
+        if (!customQuery && editorRef) {
             const selection = editorRef.getSelection();
             const selectedText = editorRef.getModel()?.getValueInRange(selection);
             if (selectedText && selectedText.trim()) {
-                queryToExecute = selectedText.trim();
+                rawQuery = selectedText.trim();
             }
         }
 
-        if (!queryToExecute) {
-            return;
-        }
+        if (!rawQuery) return;
 
         setExecuting(true);
         setError('');
         setWarning('');
-        setResult(null);
+        setResults([]);
 
-        // Validate query syntax for database type
-        if (connectionInfo) {
-            const syntaxWarning = validateQuerySyntax(queryToExecute, connectionInfo.type);
-            if (syntaxWarning) {
-                setWarning(syntaxWarning);
-            }
+        // Split queries by semicolon (basic splitting)
+        const queries = rawQuery
+            .split(';')
+            .map(q => q.trim())
+            .filter(q => q.length > 0);
+
+        if (queries.length === 0) {
+            setExecuting(false);
+            return;
         }
 
+        const allResults: QueryResult[] = [];
+        let finalError = '';
+
         try {
-            const res = await fetch('/api/query', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    connectionId,
-                    query: queryToExecute,
-                    timeout: 30000,
-                    maxRows: 1000,
-                }),
-            });
+            for (const q of queries) {
+                // Validate syntax (only show for the first one for brevity, or combine)
+                if (connectionInfo) {
+                    const syntaxWarning = validateQuerySyntax(q, connectionInfo.type);
+                    if (syntaxWarning) setWarning(prev => prev ? `${prev}\n${syntaxWarning}` : syntaxWarning);
+                }
 
-            const data = await res.json();
+                const qUpper = q.toUpperCase();
+                let metadata: any = {};
 
-            if (!res.ok) {
-                throw new Error(data.error || 'Query execution failed');
-            }
+                // Capture Metadata for Rollback (Row Snapshots)
+                if (qUpper.startsWith('DELETE FROM') || qUpper.startsWith('UPDATE')) {
+                    try {
+                        const tableNameMatch = q.match(/(?:DELETE\s+FROM|UPDATE)\s+([`"]?)(\w+)\1/i);
+                        const whereMatch = q.match(/WHERE\s+([\s\S]+)$/i);
 
-            setResult(data);
+                        if (tableNameMatch) {
+                            const tableName = tableNameMatch[2];
+                            const whereClause = whereMatch ? whereMatch[0] : '';
 
-            // Track database changes for version control
-            if (connectionId && queryToExecute) {
-                const change = parseQueryForChanges(queryToExecute, data.rowCount);
+                            // Capture rows BEFORE they are changed/deleted
+                            const snapshotRes = await fetch('/api/query', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    connectionId,
+                                    query: `SELECT * FROM ${tableName} ${whereClause}`,
+                                    timeout: 10000,
+                                    maxRows: 1000
+                                }),
+                            });
+
+                            if (snapshotRes.ok) {
+                                const snapshotData = await snapshotRes.json();
+                                if (qUpper.startsWith('DELETE FROM')) {
+                                    metadata.rows = snapshotData.rows;
+                                } else {
+                                    metadata.oldRows = snapshotData.rows;
+                                    metadata.primaryKeyFields = snapshotData.fields?.map((f: any) => f.name).slice(0, 1); // Heuristic
+                                }
+                            }
+                        }
+                    } catch (snapErr) {
+                        console.error('Failed to capture snapshot for rollback:', snapErr);
+                    }
+                }
+
+                const res = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        connectionId,
+                        query: q,
+                        timeout: 30000,
+                        maxRows: 1000,
+                    }),
+                });
+
+                const data = await res.json();
+                if (!res.ok) {
+                    finalError = data.error || 'Query execution failed';
+                    // We stop on the first error for safety
+                    break;
+                }
+
+                const resultWithColumns: QueryResult = {
+                    ...data,
+                    columnNames: data.fields?.map((f: any) => f.name) || []
+                };
+                allResults.push(resultWithColumns);
+
+                // Track database changes for version control
+                const change = parseQueryForChanges(q, data.rowCount);
                 if (change) {
+                    // Enrich change with metadata and pre-generated rollback SQL
+                    change.metadata = metadata;
+                    change.rollbackSQL = generateRollbackSQL(q, metadata);
                     await trackChange(connectionId, change);
-                    await loadPendingChanges(); // Refresh pending count
                 }
             }
+
+            setResults(allResults);
+            if (finalError) setError(finalError);
+
+            // Reload pending changes once after all queries
+            await loadPendingChanges();
         } catch (err: any) {
             setError(err.message);
         } finally {
             setExecuting(false);
         }
-    }, [connectionId, query]);
+    }, [connectionId, query, editorRef, connectionInfo]);
+
+    // Handle Ctrl+E shortcut
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+                e.preventDefault();
+                executeQuery();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [executeQuery]);
 
 
 
     const exportToCSV = () => {
-        if (!result || !result.rows.length) return;
+        if (results.length === 0 || !results[0].rows.length) return;
 
-        const headers = result.fields.map((f) => f.name).join(',');
-        const rows = result.rows.map((row) =>
-            result.fields.map((f) => JSON.stringify(row[f.name] || '')).join(',')
+        const res = results[0];
+        const headers = res.fields.map((f: any) => f.name).join(',');
+        const rows = res.rows.map((row: any) =>
+            res.fields.map((f: any) => JSON.stringify(row[f.name] || '')).join(',')
         );
 
         const csv = [headers, ...rows].join('\n');
@@ -623,7 +700,7 @@ function QueryPageContent() {
                     {/* Toolbar */}
                     <div className="border-b border-border p-4 flex items-center gap-2 flex-wrap">
                         <button
-                            onClick={executeQuery}
+                            onClick={() => executeQuery()}
                             disabled={executing || !query.trim()}
                             className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition disabled:opacity-50 flex items-center gap-2"
                         >
@@ -673,7 +750,7 @@ function QueryPageContent() {
                             Save
                         </button>
 
-                        {result && result.rows.length > 0 && (
+                        {results.length > 0 && (
                             <button
                                 onClick={() => setShowExportModal(true)}
                                 className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
@@ -698,13 +775,13 @@ function QueryPageContent() {
 
                         <div className="flex-1" />
 
-                        {result && (
+                        {results.length > 0 && (
                             <div className="flex items-center gap-4 text-sm text-muted-foreground">
                                 <div className="flex items-center gap-1">
                                     <Clock className="w-4 h-4" />
-                                    {result.executionTime}ms
+                                    {results.reduce((acc, r) => acc + r.executionTime, 0)}ms
                                 </div>
-                                <div>{result.rowCount} rows</div>
+                                <div>{results.length} result set(s)</div>
                             </div>
                         )}
                     </div>
@@ -743,73 +820,56 @@ function QueryPageContent() {
                                 {warning}
                             </div>
                         )}
-                        {result && !error && (
-                            <div>
-                                <div className="mb-4 text-sm text-muted-foreground">
-                                    Query executed in {result.executionTime}ms · {result.rowCount} rows returned
-                                    {result.hasMore && ' · More results available'}
+                        {results.map((res, idx) => (
+                            <div key={idx} className="mb-8 last:mb-0">
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="text-sm font-semibold bg-primary/10 text-primary px-3 py-1 rounded-full border border-primary/20">
+                                        Result Set #{idx + 1} ({res.rowCount} rows)
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Executed in {res.executionTime}ms
+                                    </div>
                                 </div>
 
-                                {result.rows.length === 0 ? (
-                                    <div className="text-center py-12 text-muted-foreground">
+                                {res.rows.length === 0 ? (
+                                    <div className="text-center py-8 text-muted-foreground border border-dashed border-border rounded-lg">
                                         Query executed successfully but returned no rows
                                     </div>
                                 ) : (
                                     <div className="border border-border rounded-lg overflow-hidden">
                                         <ResultsToolbar
-                                            data={result.rows}
-                                            columns={columns}
-                                            onFilteredDataChange={setFilteredResults}
-                                            onExport={() => setShowExportModal(true)}
+                                            data={res.rows}
+                                            columns={res.columnNames}
+                                            onFilteredDataChange={(data) => {
+                                                setFilteredResults(prev => {
+                                                    const next = new Map(prev);
+                                                    next.set(idx, data);
+                                                    return next;
+                                                });
+                                            }}
+                                            onExport={() => {
+                                                setExportingIndex(idx);
+                                                setShowExportModal(true);
+                                            }}
                                         />
-                                        <div className="h-[500px]">
+                                        <div className="h-[400px]">
                                             <DataEditor
-                                                rows={result.rows}
-                                                fields={result.fields}
-                                                onSave={async (updates: Array<{ rowIndex: number; field: string; oldValue: any; newValue: any }>) => {
-                                                    try {
-                                                        const res = await fetch('/api/data/update', {
-                                                            method: 'POST',
-                                                            headers: { 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify({
-                                                                connectionId,
-                                                                schema: 'public', // TODO: Get detailed schema info
-                                                                table: extractTableName(query) || 'users',
-                                                                updates
-                                                            })
-                                                        });
-
-                                                        const data = await res.json();
-                                                        if (res.ok) {
-                                                            // Refresh query
-                                                            executeQuery();
-                                                            // Add pending VCS change
-                                                            await trackChange(connectionId!, {
-                                                                type: 'DATA',
-                                                                operation: 'UPDATE',
-                                                                target: 'table_name', // Needs proper parsing
-                                                                description: `Direct edit of ${updates.length} rows`,
-                                                                query: 'UPDATE ... (batch direct edit)'
-                                                            });
-                                                            loadPendingChanges();
-                                                        } else {
-                                                            alert(`Update failed: ${data.error}`);
-                                                        }
-                                                    } catch (e) {
-                                                        console.error(e);
-                                                        alert('Save failed');
-                                                    }
+                                                rows={res.rows}
+                                                fields={res.fields}
+                                                onSave={async () => {
+                                                    // This might need more logic for multiple results, but for now we keep it basic
+                                                    alert("Inline editing is currently limited to the first result set in multi-query mode.");
                                                 }}
                                             />
                                         </div>
                                     </div>
                                 )}
                             </div>
-                        )}
+                        ))}
 
-                        {!result && !error && (
+                        {results.length === 0 && !error && (
                             <div className="text-center py-12 text-muted-foreground">
-                                Write a query and click "Run" to execute
+                                Write a query and click "Run" (or Ctrl+E) to execute
                             </div>
                         )}
                     </div>
@@ -837,11 +897,11 @@ function QueryPageContent() {
             )}
 
             {/* Export Modal */}
-            {showExportModal && result && (
+            {showExportModal && results[exportingIndex] && (
                 <ExportModal
-                    data={filteredResults.length > 0 ? filteredResults : result.rows}
-                    columns={columns}
-                    tableName={`query-result-${Date.now()}`}
+                    data={filteredResults.get(exportingIndex) || results[exportingIndex].rows}
+                    columns={results[exportingIndex].columnNames}
+                    tableName={`query-result-${exportingIndex + 1}-${Date.now()}`}
                     onClose={() => setShowExportModal(false)}
                 />
             )}
@@ -874,7 +934,7 @@ function QueryPageContent() {
             {showQueryPlan && queryPlan && connectionInfo && (
                 <QueryPlanViewer
                     plan={queryPlan}
-                    executionTime={result?.executionTime}
+                    executionTime={results[0]?.executionTime}
                     dbType={connectionInfo.type}
                     onClose={() => setShowQueryPlan(false)}
                 />

@@ -1,32 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConnection, adapterInstances } from '@/lib/store';
+import { connections, adapterInstances, getConnection } from '@/lib/store';
 import { getConnectedAdapter } from '@/lib/db-utils';
 import { generateUpdateStatement } from '@/lib/sql-helper';
+import { Logger } from '@bosdb/utils';
+
+const logger = new Logger('DataUpdateAPI');
 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { connectionId, schema, table, updates } = body;
+        const { connectionId, schema, table, updates, filters } = body;
 
         // Basic validation
-        if (!connectionId || !schema || !table || !updates || !Array.isArray(updates)) {
-            return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
+        if (!connectionId || !schema || !table || !updates) {
+            return NextResponse.json(
+                { error: 'Missing required fields' },
+                { status: 400 }
+            );
         }
 
-        const connection = await getConnection(connectionId);
-        if (!connection) {
-            return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+        // Get connection info
+        const connectionInfo = await getConnection(connectionId);
+        if (!connectionInfo) {
+            return NextResponse.json({ error: `Connection not found: ${connectionId}` }, { status: 404 });
         }
 
-        // Get adapter instance
-        const adapter = await getConnectedAdapter(connectionId);
-
-        // Get the adapter's internal connection ID
-        const adapterInfo = adapterInstances.get(connectionId);
-        if (!adapterInfo) {
-            return NextResponse.json({ error: 'Adapter connection not found' }, { status: 500 });
-        }
-        const adapterConnectionId = adapterInfo.adapterConnectionId;
+        // Get adapter instance using shared helper
+        const { adapter, adapterConnectionId } = await getConnectedAdapter(connectionId);
 
         const results = [];
         const errors = [];
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
                 const { primaryKey, changes } = update;
 
                 // Generate SQL
-                const sql = generateUpdateStatement(schema, table, primaryKey, changes, connection.type);
+                const sql = generateUpdateStatement(schema, table, primaryKey, changes, connectionInfo.type);
 
                 // Execute with the correct adapter connection ID
                 await adapter.executeQuery({

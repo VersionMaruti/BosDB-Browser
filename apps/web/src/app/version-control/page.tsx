@@ -335,65 +335,87 @@ function VersionControlContent() {
                 ) : (
                     <>
                         {/* Compare Tab */}
-                        {activeTab === 'compare' && diffResult && (
+                        {activeTab === 'compare' && (
                             <div>
-                                <h2 className="text-2xl font-bold mb-4">
-                                    Comparing r{diffResult.from.revision} ↔ r{diffResult.to.revision}
-                                </h2>
-
-                                <div className="grid md:grid-cols-2 gap-4 mb-6">
-                                    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-                                        <h3 className="font-semibold mb-2">From: r{diffResult.from.revision}</h3>
-                                        <p className="text-sm text-gray-400">{diffResult.from.commit.message}</p>
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            {new Date(diffResult.from.commit.timestamp).toLocaleString()}
+                                {!diffResult ? (
+                                    <div className="text-center py-20 bg-gray-800/30 border border-dashed border-gray-700 rounded-xl">
+                                        <div className="text-6xl mb-4">📊</div>
+                                        <h3 className="text-xl font-semibold mb-2">No Comparison Active</h3>
+                                        <p className="text-gray-400 max-w-md mx-auto mb-6">
+                                            Select two revisions from the dropdowns above and click "Compare" to see the differences between states.
                                         </p>
-                                    </div>
-                                    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-                                        <h3 className="font-semibold mb-2">To: r{diffResult.to.revision}</h3>
-                                        <p className="text-sm text-gray-400">{diffResult.to.commit.message}</p>
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            {new Date(diffResult.to.commit.timestamp).toLocaleString()}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <h3 className="text-xl font-bold mb-3">Changes</h3>
-
-                                <div className="space-y-3">
-                                    {diffResult.from.changes.map((change: any, idx: number) => (
-                                        <div key={idx} className="bg-red-900/20 border border-red-500/30 rounded-lg p-4">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-red-400 font-semibold">− REMOVED</span>
-                                                <span className="text-sm text-gray-400">{change.operation} {change.target}</span>
+                                        <div className="flex justify-center gap-4">
+                                            <div className="flex items-center gap-2 text-sm text-gray-500">
+                                                <span className="w-3 h-3 rounded-full bg-red-500/50"></span>
+                                                Removed Changes
                                             </div>
-                                            {change.query && (
-                                                <pre className="bg-black/30 p-2 rounded text-sm text-red-300 overflow-x-auto">{change.query}</pre>
-                                            )}
-                                        </div>
-                                    ))}
-
-                                    {diffResult.to.changes.map((change: any, idx: number) => (
-                                        <div key={idx} className="bg-green-900/20 border border-green-500/30 rounded-lg p-4">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <span className="text-green-400 font-semibold">+ ADDED</span>
-                                                <span className="text-sm text-gray-400">{change.operation} {change.target}</span>
+                                            <div className="flex items-center gap-2 text-sm text-gray-500">
+                                                <span className="w-3 h-3 rounded-full bg-green-500/50"></span>
+                                                Added Changes
                                             </div>
-                                            {change.query && (
-                                                <pre className="bg-black/30 p-2 rounded text-sm text-green-300 overflow-x-auto">{change.query}</pre>
-                                            )}
                                         </div>
-                                    ))}
-                                </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <h2 className="text-2xl font-bold mb-4">
+                                            Comparing r{diffResult.from.revision} ↔ r{diffResult.to.revision}
+                                        </h2>
 
-                                <div className="mt-6">
-                                    <button
-                                        onClick={() => rollbackToCommit(diffResult.to.revision)}
-                                        className="px-6 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg transition font-semibold"
-                                    >
-                                        ⏮️ Rollback to r{diffResult.to.revision}
-                                    </button>
-                                </div>
+                                        <div className="grid md:grid-cols-2 gap-4 mb-6">
+                                            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                                                <h3 className="font-semibold mb-2">From: r{diffResult.from.revision}</h3>
+                                                <p className="text-sm text-gray-400">{diffResult.from.commit.message}</p>
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    {new Date(diffResult.from.commit.timestamp).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                                                <h3 className="font-semibold mb-2">To: r{diffResult.to.revision}</h3>
+                                                <p className="text-sm text-gray-400">{diffResult.to.commit.message}</p>
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    {new Date(diffResult.to.commit.timestamp).toLocaleString()}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <h3 className="text-xl font-bold mb-3">Changes</h3>
+
+                                        <div className="space-y-3">
+                                            {diffResult.from.changes.map((change: any, idx: number) => (
+                                                <div key={idx} className="bg-red-900/20 border border-red-500/30 rounded-lg p-4">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="text-red-400 font-semibold">− REMOVED</span>
+                                                        <span className="text-sm text-gray-400">{change.operation} {change.target}</span>
+                                                    </div>
+                                                    {change.query && (
+                                                        <pre className="bg-black/30 p-2 rounded text-sm text-red-300 overflow-x-auto">{change.query}</pre>
+                                                    )}
+                                                </div>
+                                            ))}
+
+                                            {diffResult.to.changes.map((change: any, idx: number) => (
+                                                <div key={idx} className="bg-green-900/20 border border-green-500/30 rounded-lg p-4">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="text-green-400 font-semibold">+ ADDED</span>
+                                                        <span className="text-sm text-gray-400">{change.operation} {change.target}</span>
+                                                    </div>
+                                                    {change.query && (
+                                                        <pre className="bg-black/30 p-2 rounded text-sm text-green-300 overflow-x-auto">{change.query}</pre>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="mt-6">
+                                            <button
+                                                onClick={() => rollbackToCommit(diffResult.to.revision)}
+                                                className="px-6 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg transition font-semibold"
+                                            >
+                                                ⏮️ Rollback to r{diffResult.to.revision}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 

@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createVersionControl, FileStorage } from '@bosdb/version-control';
 import path from 'path';
 import { promises as fs } from 'fs';
-import { generateInverseSQL } from '@/lib/vcs-helper';
-import { connections, adapterInstances } from '@/lib/store';
+import { generateRollbackSQL } from '@/lib/vcs-helper';
+import { connections, adapterInstances, getConnection } from '@/lib/store';
 import { AdapterFactory } from '@bosdb/db-adapters';
 import { decryptCredentials } from '@bosdb/security';
 import { Logger } from '@bosdb/utils';
+import { getConnectedAdapter } from '@/lib/db-utils';
 
 const logger = new Logger('RollbackAPI');
 
@@ -20,9 +21,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Connection ID required' }, { status: 400 });
         }
 
-        const connectionInfo = connections.get(connectionId);
+        // Get connection info
+        const connectionInfo = await getConnection(connectionId);
         if (!connectionInfo) {
-            return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+            return NextResponse.json({ error: `Connection not found: ${connectionId}` }, { status: 404 });
         }
 
         // Initialize VCS
@@ -75,13 +77,32 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Target commit not found' }, { status: 404 });
         }
 
+        // Check if already reverted
+        const isAlreadyReverted = commits.some((c: any) =>
+            c.message.includes(`Revert:`) && c.message.includes(targetCommit.id.substring(0, 8))
+        );
+
+        if (isRevert && isAlreadyReverted) {
+            return NextResponse.json({ error: `Commit ${targetCommit.id.substring(0, 8)} has already been reverted.` }, { status: 400 });
+        }
+
         // --- PHYSICAL ROLLBACK ---
         // Generate inverse SQL for all changes being undone
         const undoSQLs: string[] = [];
+        // Rollback commits in reverse order (Log is already HEAD first, so it depends on how we slice)
+        // If commitsToUndo is HEAD to target, we should follow it.
+        // But for a SINGLE REVERT, we just need that commit's changes in REVERSE.
+
         for (const commit of commitsToUndo) {
-            for (const change of commit.changes) {
-                const sql = generateInverseSQL(change);
-                if (sql) undoSQLs.push(sql);
+            // Un-apply changes in REVERSE order within the commit
+            const reversedChanges = [...commit.changes].reverse();
+            for (const change of reversedChanges) {
+                if (change.status === 'REVERTED') continue; // Skip already reverted
+
+                const sql = change.rollbackSQL || generateRollbackSQL(change.query, change.metadata);
+                if (sql && sql !== 'MANUAL') {
+                    undoSQLs.push(sql);
+                }
             }
         }
 
@@ -89,40 +110,16 @@ export async function POST(request: NextRequest) {
 
         // Execute SQL on database if there are changes to undo
         if (undoSQLs.length > 0) {
-            // Get or create adapter
-            let adapterInfo = adapterInstances.get(connectionId);
-            if (!adapterInfo) {
-                const adapter = AdapterFactory.create(connectionInfo.type);
-                const credentials = decryptCredentials(connectionInfo.credentials);
-                const connectResult = await adapter.connect({
-                    name: connectionInfo.name,
-                    host: connectionInfo.host,
-                    port: connectionInfo.port,
-                    database: connectionInfo.database,
-                    username: credentials.username,
-                    password: credentials.password,
-                    ssl: connectionInfo.ssl,
-                    readOnly: connectionInfo.readOnly,
-                });
-                if (!connectResult.success) {
-                    return NextResponse.json({ error: 'Failed to connect to database for rollback' }, { status: 500 });
-                }
-                adapterInfo = { adapter, adapterConnectionId: connectResult.connectionId };
-                adapterInstances.set(connectionId, adapterInfo);
-            }
+            // Get adapter instance using shared helper
+            const { adapter, adapterConnectionId } = await getConnectedAdapter(connectionId);
 
             // Execute each undo SQL
             for (const sql of undoSQLs) {
                 try {
                     // Skip execution for comments or hints
-                    if (sql.trim().startsWith('--')) {
-                        logger.info(`Skipping hint: ${sql}`);
-                        continue;
-                    }
-
                     logger.info(`Executing undo SQL: ${sql}`);
-                    await adapterInfo.adapter.executeQuery({
-                        connectionId: adapterInfo.adapterConnectionId,
+                    await adapter.executeQuery({
+                        connectionId: adapterConnectionId,
                         query: sql,
                         timeout: 30000,
                     });

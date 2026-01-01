@@ -4,14 +4,15 @@ import { decryptCredentials } from '@bosdb/security';
 import { validateQuery, isReadOnlyQuery } from '@bosdb/security';
 import { Logger } from '@bosdb/utils';
 import type { QueryRequest } from '@bosdb/core';
-import { connections, adapterInstances } from '@/lib/store';
+import { connections, adapterInstances, getConnection } from '@/lib/store';
 import { addQueryToHistory } from '@/lib/queryStore';
 
 const logger = new Logger('QueryAPI');
 
 export async function POST(request: NextRequest) {
+    let body: any;
     try {
-        const body = await request.json();
+        body = await request.json();
         const { connectionId, query, timeout, maxRows } = body;
 
         if (!connectionId || !query) {
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
         logger.info(`Total connections in store: ${connections.size}`);
 
         // Get connection info
-        const connectionInfo = connections.get(connectionId);
+        const connectionInfo = await getConnection(connectionId);
         if (!connectionInfo) {
             logger.error(`Connection ${connectionId} not found in store`);
             return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
@@ -57,20 +58,17 @@ export async function POST(request: NextRequest) {
 
         // Get adapter instance
         let adapter;
-        let adapterConnectionId = connectionId;
+        let adapterConnectionId;
 
         try {
             // Use shared helper to get connected adapter
             // This ensures consistent connection state across all API routes
-            // and properly passes the connectionId to the adapter
-            const connectedAdapter = await import('@/lib/db-utils').then(m => m.getConnectedAdapter(connectionId));
-            adapter = connectedAdapter;
-            
-            // NOTE: db-utils now ensures the adapter uses the same ID as connectionId
-            adapterConnectionId = connectionId;
+            const result = await import('@/lib/db-utils').then(m => m.getConnectedAdapter(connectionId));
+            adapter = result.adapter;
+            adapterConnectionId = result.adapterConnectionId;
         } catch (connError: any) {
-             logger.error(`Failed to connect to database: ${connError.message}`);
-             return NextResponse.json(
+            logger.error(`Failed to connect to database: ${connError.message}`);
+            return NextResponse.json(
                 { error: `Failed to connect to database: ${connError.message}` },
                 { status: 500 }
             );
@@ -118,8 +116,8 @@ export async function POST(request: NextRequest) {
 
         // Add failed query to history (with safe access)
         try {
-            const body = await request.clone().json();
-            const connInfo = connections.get(body.connectionId);
+            // body is already parsed at the top of POST
+            const connInfo = await getConnection(body.connectionId);
             const userEmail = request.headers.get('x-user-email');
 
             if (connInfo) {
