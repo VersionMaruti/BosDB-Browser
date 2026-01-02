@@ -46,7 +46,8 @@ export async function POST(request: NextRequest) {
             type,
             name,
             user.organizationId,
-            autoStart !== false // Default to true
+            autoStart !== false, // Default to true
+            request.signal
         );
 
         console.log(`[Docker API] Successfully created database: ${database.id}`);
@@ -161,7 +162,16 @@ function getConnectionString(db: any): string {
         case 'derby':
         case 'hsqldb':
         case 'libsql':
+        case 'firebird':
+        case 'cubrid':
             return `jdbc:${type}:@${host}:${port}/${database}`;
+
+        case 'couchbase':
+        case 'couchdb':
+            return `http://${username}:${password}@${host}:${port}`;
+
+        case 'orientdb':
+            return `remote:${host}:${port}/${database}`;
 
         case 'rabbitmq':
             return `amqp://${username}:${password}@${host}:${port}`;

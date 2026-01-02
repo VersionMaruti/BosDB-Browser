@@ -3,7 +3,7 @@ import { AdapterFactory } from '@bosdb/db-adapters';
 import { encryptCredentials } from '@bosdb/security';
 import { Logger } from '@bosdb/utils';
 import type { ConnectionConfig } from '@bosdb/core';
-import { connections, saveConnections } from '@/lib/store';
+import { connections, saveConnections, getConnection } from '@/lib/store';
 
 const logger = new Logger('ConnectionsAPI');
 
@@ -156,10 +156,10 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: 'Connection ID required' }, { status: 400 });
         }
 
-        const connection = connections.get(connectionId);
+        const connection = await getConnection(connectionId);
 
         if (!connection) {
-            return NextResponse.json({ error: 'Connection not found' }, { status: 404 });
+            return NextResponse.json({ error: `Connection not found: ${connectionId}` }, { status: 404 });
         }
 
         // Verify user owns this connection

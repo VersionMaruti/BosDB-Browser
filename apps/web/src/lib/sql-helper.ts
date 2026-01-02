@@ -87,12 +87,12 @@ export interface TableDef {
     columns: ColumnDef[];
 }
 
-export function generateCreateTableSQL(tableDef: TableDef, schema: string = 'public'): string {
+export function generateCreateTableSQL(tableDef: any, schema: string = 'public'): string {
     if (!tableDef.name) throw new Error('Table name is required');
     if (!tableDef.columns || tableDef.columns.length === 0) throw new Error('At least one column is required');
 
-    const columnDefinitions = tableDef.columns.map(col => {
-        const parts = [`"${col.name}"`, col.type];
+    const columnDefinitions = tableDef.columns.map((col: any) => {
+        const parts = [`"${col.name}"`, col.type || col.dataType];
 
         if (col.isPrimaryKey) {
             parts.push('PRIMARY KEY');
@@ -118,4 +118,33 @@ export function generateCreateTableSQL(tableDef: TableDef, schema: string = 'pub
     });
 
     return `CREATE TABLE "${schema}"."${tableDef.name}" (\n    ${columnDefinitions.join(',\n    ')}\n);`;
+}
+
+export function getCurrentStatement(sql: string, offset: number): string {
+    if (!sql) return '';
+
+    // Split by semicolon, but be careful about semicolons in strings or comments
+    // For a robust implementation, we'd need a full lexer. 
+    // For now, let's use a simpler heuristic: find the closest semicolons around the offset.
+
+    let start = 0;
+    let end = sql.length;
+
+    // Find last semicolon before offset
+    for (let i = offset - 1; i >= 0; i--) {
+        if (sql[i] === ';') {
+            start = i + 1;
+            break;
+        }
+    }
+
+    // Find next semicolon after offset
+    for (let i = offset; i < sql.length; i++) {
+        if (sql[i] === ';') {
+            end = i;
+            break;
+        }
+    }
+
+    return sql.substring(start, end).trim();
 }

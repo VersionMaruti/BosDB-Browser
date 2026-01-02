@@ -101,6 +101,11 @@ export default function DashboardPage() {
                                     Documentation
                                 </button>
                             </Link>
+                            <Link href="/debug">
+                                <button className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">
+                                    Debugger
+                                </button>
+                            </Link>
                             <Link href="/settings">
                                 <button className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground transition">
                                     Settings
@@ -387,6 +392,7 @@ function NewConnectionModal({
 }) {
     const router = useRouter();
     const [provisioning, setProvisioning] = useState(false);
+    const [abortController, setAbortController] = useState<AbortController | null>(null);
     const [progress, setProgress] = useState('');
     const [error, setError] = useState('');
     const [showManualForm, setShowManualForm] = useState(false);
@@ -572,6 +578,8 @@ function NewConnectionModal({
     });
 
     const provisionDatabase = async (type: string) => {
+        const controller = new AbortController();
+        setAbortController(controller);
         setProvisioning(true);
         setProgress(`Creating ${type} database...`);
         setError('');
@@ -594,11 +602,15 @@ function NewConnectionModal({
                     name: `My ${type.charAt(0).toUpperCase() + type.slice(1)} Database`,
                     autoStart: true
                 }),
+                signal: controller.signal
             });
 
             const data = await res.json();
 
             if (!res.ok) {
+                if (res.status === 499 || data.error === 'Provisioning cancelled') {
+                    return; // Handled by catch
+                }
                 throw new Error(data.error || 'Failed to create database');
             }
 
@@ -624,6 +636,7 @@ function NewConnectionModal({
                     readOnly: false,
                     skipTest: true, // Skip test for auto-provisioned - credentials are trusted
                 }),
+                signal: controller.signal
             });
 
             const connData = await connRes.json();
@@ -638,8 +651,22 @@ function NewConnectionModal({
             router.push(`/query?connection=${connData.id}`);
 
         } catch (err: any) {
+            if (err.name === 'AbortError' || err.message === 'Provisioning cancelled') {
+                console.log('Provisioning was cancelled');
+                setProvisioning(false);
+                setProgress('');
+                return;
+            }
             setError(err.message || 'Failed to create database');
             setProvisioning(false);
+        } finally {
+            setAbortController(null);
+        }
+    };
+
+    const handleCancelProvisioning = () => {
+        if (abortController) {
+            abortController.abort();
         }
     };
 
@@ -844,14 +871,16 @@ function NewConnectionModal({
                             Select from 100+ database types to provision instantly
                         </p>
                     </div>
-                    {!provisioning && (
-                        <button
-                            onClick={onClose}
-                            className="text-muted-foreground hover:text-foreground p-2"
-                        >
-                            ✕
-                        </button>
-                    )}
+                    <button
+                        onClick={provisioning ? handleCancelProvisioning : onClose}
+                        className={`p-2 rounded-lg transition-colors ${provisioning
+                            ? 'text-red-500 hover:bg-red-500/10 hover:text-red-400'
+                            : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        title={provisioning ? "Cancel provisioning" : "Close"}
+                    >
+                        ✕
+                    </button>
                 </div>
 
                 {error && (
