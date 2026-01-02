@@ -557,8 +557,9 @@ export default function PricingPage() {
 
                                         {/* STRIPE OR CARD SECTION */}
                                         {clientSecret && stripePromise ? (
-                                            <Elements stripe={stripePromise} options={{ clientSecret, theme: 'night' }}>
+                                            <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'night' } }}>
                                                 <StripeCheckout
+                                                    plan={selectedPlan}
                                                     amount={calculateDiscountedPrice((PRICING as any)[selectedPlan].price, appliedCoupon)}
                                                     onSuccess={async (paymentId) => {
                                                         // Confirm with API

@@ -6,7 +6,7 @@ import { useStripe, useElements, PaymentElement } from '@stripe/react-stripe-js'
 import { Loader2, Lock, Shield } from 'lucide-react';
 
 interface StripeCheckoutProps {
-    plan: string;
+    plan?: string;
     amount: number;
     onSuccess: (paymentIntentId: string) => void;
     onError: (error: string) => void;
@@ -53,12 +53,6 @@ export default function StripeCheckout({ amount, onSuccess, onError }: StripeChe
                 <PaymentElement
                     options={{
                         layout: 'tabs',
-                        theme: 'night',
-                        variables: {
-                            colorPrimary: '#7c3aed',
-                            colorBackground: '#2a2a2a',
-                            colorText: '#ffffff',
-                        }
                     }}
                 />
             </div>

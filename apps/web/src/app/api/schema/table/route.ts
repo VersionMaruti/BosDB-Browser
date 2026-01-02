@@ -3,6 +3,7 @@ import { getConnectedAdapter } from '@/lib/db-utils';
 import { trackSchemaChange } from '@/lib/vcs-helper';
 import { generateCreateTableSQL } from '@/lib/sql-helper';
 import { getCurrentUser } from '@/lib/auth';
+import type { QueryRequest } from '@bosdb/core';
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const adapter = await getConnectedAdapter(connectionId);
+        const { adapter, adapterConnectionId } = await getConnectedAdapter(connectionId);
 
         let sql = '';
 
@@ -29,7 +30,11 @@ export async function POST(request: NextRequest) {
         }
 
         // Execute SQL
-        await adapter.executeQuery(sql);
+        await adapter.executeQuery({
+            connectionId: adapterConnectionId,
+            query: sql,
+            timeout: 30000
+        });
 
         // Track in VCS
         try {
