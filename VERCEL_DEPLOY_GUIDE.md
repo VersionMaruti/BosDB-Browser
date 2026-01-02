@@ -28,3 +28,16 @@ Copy the output and paste it as the value for `ENCRYPTION_MASTER_KEY`.
 ## 4. Updates
 We have optimized the configuration (`turbo.json`, `next.config.js`) to ensure smooth deployments.
 Simply push your changes to your git branch connected to Vercel.
+
+## 5. Deploying a NEW Instance (Fresh Deploy)
+To deploy this as a completely separate app (not overwriting the old one):
+
+1.  Go to **Vercel Dashboard**.
+2.  Click **"Add New..."** -> **"Project"**.
+3.  Select the `BosDB-Browser` repository.
+4.  **Important**: In the "Import Git Repository" screen, you can change the **Project Name** (e.g., `bosdb-v2` or `bosdb-arush`) to distinguish it from the old one.
+5.  Select the **`arush`** branch to deploy (if asked, or configure it in settings later).
+6.  Enter the **Environment Variables** from Step 1.
+7.  Click **Deploy**.
+
+This will create a fresh URL (e.g., `bosdb-v2.vercel.app`) separate from your previous deployment.
