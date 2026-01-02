@@ -3,6 +3,7 @@ import { getConnectedAdapter } from '@/lib/db-utils';
 import { trackSchemaChange } from '@/lib/vcs-helper';
 import { generateCreateTableSQL } from '@/lib/sql-helper';
 import { getCurrentUser } from '@/lib/auth';
+import type { QueryRequest } from '@bosdb/core';
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,7 +19,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const adapter = await getConnectedAdapter(connectionId);
+        const { adapter, adapterConnectionId } = await getConnectedAdapter(connectionId);
 
         let sql = '';
 
@@ -29,7 +30,11 @@ export async function POST(request: NextRequest) {
         }
 
         // Execute SQL
-        await adapter.executeQuery(sql);
+        await adapter.executeQuery({
+            connectionId: adapterConnectionId,
+            query: sql,
+            timeout: 30000
+        });
 
         // Track in VCS
         try {
@@ -49,5 +54,31 @@ export async function POST(request: NextRequest) {
     } catch (error: any) {
         console.error('Schema operation failed:', error);
         return NextResponse.json({ error: error.message || 'Schema operation failed' }, { status: 500 });
+    }
+}
+
+export async function GET(request: NextRequest) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const connectionId = searchParams.get('connectionId');
+        const tableName = searchParams.get('table');
+        const schema = searchParams.get('schema') || 'public';
+
+        if (!connectionId || !tableName) {
+            return NextResponse.json({ error: 'Missing connectionId or table name' }, { status: 400 });
+        }
+
+        const { adapter, adapterConnectionId } = await getConnectedAdapter(connectionId);
+
+        // Describe table
+        const tableMetadata = await adapter.describeTable(adapterConnectionId, schema, tableName);
+
+        // Generate CREATE TABLE SQL
+        const sql = generateCreateTableSQL(tableMetadata, schema);
+
+        return NextResponse.json({ success: true, tableMetadata, sql });
+    } catch (error: any) {
+        console.error('Failed to fetch table definition:', error);
+        return NextResponse.json({ error: error.message || 'Failed to fetch table definition' }, { status: 500 });
     }
 }
