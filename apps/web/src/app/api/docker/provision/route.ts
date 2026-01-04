@@ -1,3 +1,4 @@
+// Updated: 2026-01-04 21:58 - Force Vercel fresh deployment
 import { NextRequest, NextResponse } from 'next/server';
 import { pullAndStartDatabase, checkDockerAvailable } from '@/lib/docker-manager';
 import { DatabaseType, VALID_DATABASE_TYPES } from '@/constants/database-types';
