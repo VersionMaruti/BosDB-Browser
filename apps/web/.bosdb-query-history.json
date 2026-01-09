@@ -1141,5 +1141,17 @@
     "userEmail": "ritvik@flipkart.com",
     "orgId": "flipkart.com",
     "id": "history_1767966841470_2jeftqadw"
+  },
+  {
+    "connectionId": "conn_1767967526550_0v1cpy0oa",
+    "connectionName": "My Postgres Database",
+    "query": "SELECT * FROM information_schema.tables LIMIT 10",
+    "executedAt": "2026-01-09T14:05:33.001Z",
+    "executionTime": 501,
+    "rowCount": 10,
+    "success": true,
+    "userEmail": "ritvik@flipkart.com",
+    "orgId": "flipkart.com",
+    "id": "history_1767967533001_qsjfkat3d"
   }
 ]

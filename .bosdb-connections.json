@@ -475,13 +475,27 @@
     "id": "conn_1767966609640_o11rigac7",
     "name": "My Postgres Database",
     "type": "postgres",
-    "host": "localhost",
+    "host": "switchyard.proxy.rlwy.net",
     "port": 50346,
     "database": "railway",
     "credentials": "tBQC4RzmeaAG58ADo3JTzpu2M5/01cDNOeK6xjLDilwaUg+D3AnktHmzb7uJJdwZyEmYtAuCEGPl7aK6pnqwNXSXodUypK9kPy6mYFf0uHJtoe7CkbeZl2AHLl3WEKhgHPpjry8=",
     "readOnly": false,
     "userEmail": "ritvik@flipkart.com",
     "organizationId": "flipkart.com",
-    "createdAt": "2026-01-09T13:50:09.640Z"
+    "createdAt": "2026-01-09T13:50:09.640Z",
+    "ssl": true
+  },
+  "conn_1767967526550_0v1cpy0oa": {
+    "id": "conn_1767967526550_0v1cpy0oa",
+    "name": "My Postgres Database",
+    "type": "postgres",
+    "host": "localhost",
+    "port": 50346,
+    "database": "railway",
+    "credentials": "AM80ZaQM7Yo3lNUdVFeUmdjwPY/U+39k5TQ4GfuTRZIMBXcGVqrkxLC4DtNiJOA1AprdM0NEMVzARb5D298EqAi0PeeWM34XZPjXOm4aQ7bVNJazyfN90ppopbk8J962Oy+r11A=",
+    "readOnly": false,
+    "userEmail": "ritvik@flipkart.com",
+    "organizationId": "flipkart.com",
+    "createdAt": "2026-01-09T14:05:26.550Z"
   }
 }

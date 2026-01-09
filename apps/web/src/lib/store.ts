@@ -12,11 +12,13 @@ const LEGACY_STORAGE_FILE_NAME = '.bosdb-connections.json';
  * Port to Railway Host Mapping
  * If a connection is on localhost but uses these specific ports, it's a misconfigured Railway connection.
  */
+// Port to Railway Host Mapping
 const RAILWAY_PORT_MAP: Record<number, string> = {
     50346: 'switchyard.proxy.rlwy.net',
     55276: 'metro.proxy.rlwy.net',
     34540: 'centerbeam.proxy.rlwy.net',
-    12858: 'mainline.proxy.rlwy.net'
+    12858: 'mainline.proxy.rlwy.net',
+    49717: 'trolley.proxy.rlwy.net'
 };
 
 // Find project root (contains package.json and apps directory)
@@ -114,14 +116,24 @@ function injectRailwayConnections(map: Map<string, any>) {
             password: 'CSccVVGRgPHvSbBLSbhEYkQhSrMETECk',
         },
         {
-            id: 'railway-cockroachdb',
-            name: 'Railway CockroachDB (Direct)',
-            type: 'cockroachdb',
-            host: 'REPLACE_WITH_RAILWAY_COCKROACHDB_HOST', // TODO: Replace with actual Railway host
-            port: 26257,
-            database: 'defaultdb',
-            username: 'root',
-            password: 'REPLACE_WITH_RAILWAY_COCKROACHDB_PASSWORD', // TODO: Replace with actual password
+            id: 'railway-mongo',
+            name: 'Railway MongoDB (Direct)',
+            type: 'mongodb',
+            host: 'mainline.proxy.rlwy.net',
+            port: 12858,
+            database: 'test',
+            username: 'mongo',
+            password: 'QpXFweoQZsmLYXxwgwlDyINSBpLLVbLq',
+        },
+        {
+            id: 'railway-oracle',
+            name: 'Railway Oracle (Direct)',
+            type: 'oracle',
+            host: 'trolley.proxy.rlwy.net',
+            port: 49717,
+            database: 'XE',
+            username: 'system',
+            password: 'bosdb_secret',
         }
     ];
 
