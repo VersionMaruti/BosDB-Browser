@@ -1,3 +1,8 @@
+node_modules/
+.logs/
+.turbo
+logs/
+.env
 node_modules
 .turbo
 apps/web/data/docker-databases
@@ -26,3 +31,5 @@ docker-compose.deploy.yml
 docker-compose.prod.yml
 apps/web/.next
 .next/
+node_modules/
+.turbo
