@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * AI SQL Generator API
@@ -41,10 +43,10 @@ const ANTHROPIC_MODELS: Record<string, string> = {
 const HUGGINGFACE_MODELS: Record<string, string> = {
     'mistral': 'mistralai/Mistral-7B-Instruct-v0.3',
     'codellama': 'codellama/CodeLlama-34b-Instruct-hf',
-    'llama': 'meta-llama/Llama-3.2-3B-Instruct', // Using 3B for better availability
-    'qwen': 'Qwen/Qwen2.5-7B-Instruct',           // Using 7B instead of 72B for free tier
-    'deepseek': 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B', // 1.5B is very likely on free tier
-    'auto': 'mistralai/Mistral-7B-Instruct-v0.3',
+    'llama': 'meta-llama/Llama-3.2-3B-Instruct',
+    'qwen': 'Qwen/Qwen2.5-Coder-32B-Instruct',          // Upgraded to Coder 32B
+    'deepseek': 'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B',
+    'auto': 'Qwen/Qwen2.5-Coder-32B-Instruct',          // New default
 };
 
 // System prompt for SQL generation
@@ -89,17 +91,46 @@ export async function POST(request: NextRequest) {
         }
 
         // Check for API keys in environment
-        const openaiKey = process.env.OPENAI_API_KEY;
-        const geminiKey = process.env.GEMINI_API_KEY;
-        const anthropicKey = process.env.ANTHROPIC_API_KEY;
-        const hfKey = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
+        let openaiKey = process.env.OPENAI_API_KEY;
+        let geminiKey = process.env.GEMINI_API_KEY;
+        let anthropicKey = process.env.ANTHROPIC_API_KEY;
+        let hfKey = process.env.HUGGINGFACE_API_KEY || process.env.HUGGING_FACE_API_KEY || process.env.HF_TOKEN;
+
+        // Fallback: Manually read .env if keys are missing (Monorepo fix)
+        if (!hfKey || !geminiKey) {
+            try {
+                const envPath = path.join(process.cwd(), '.env');
+                if (fs.existsSync(envPath)) {
+                    const envContent = fs.readFileSync(envPath, 'utf8');
+                    const lines = envContent.split('\n');
+                    for (const line of lines) {
+                        const [key, ...valueParts] = line.trim().split('=');
+                        const value = valueParts.join('=').trim().replace(/^["']|["']$/g, ''); // Remove quotes
+
+                        if (key === 'HUGGINGFACE_API_KEY' || key === 'HUGGING_FACE_API_KEY' || key === 'HF_TOKEN') {
+                            if (!hfKey) hfKey = value;
+                        } else if (key === 'GEMINI_API_KEY') {
+                            if (!geminiKey) geminiKey = value;
+                        } else if (key === 'OPENAI_API_KEY') {
+                            if (!openaiKey) openaiKey = value;
+                        } else if (key === 'ANTHROPIC_API_KEY') {
+                            if (!anthropicKey) anthropicKey = value;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('[AI API] Failed to manual-load .env:', err);
+            }
+        }
 
         // Debug: Log which keys are available (safely)
-        console.log('[AI API] Keys available:', {
-            gemini: !!geminiKey,
-            openai: !!openaiKey,
-            anthropic: !!anthropicKey,
-            huggingface: !!hfKey
+        console.log('[AI API] Keys status:', {
+            gemini: !!geminiKey ? 'set' : 'missing',
+            openai: !!openaiKey ? 'set' : 'missing',
+            anthropic: !!anthropicKey ? 'set' : 'missing',
+            huggingface: !!process.env.HUGGINGFACE_API_KEY ? 'HUGGINGFACE_API_KEY set' :
+                !!process.env.HUGGING_FACE_API_KEY ? 'HUGGING_FACE_API_KEY set' :
+                    !!process.env.HF_TOKEN ? 'HF_TOKEN set' : 'missing'
         });
 
         let sql = '';
@@ -141,7 +172,7 @@ export async function POST(request: NextRequest) {
                     break;
 
                 case 'huggingface':
-                    const hfKey = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
+                    // Use the hfKey declared at the top level
                     if (!hfKey) throw new Error('Hugging Face API key not configured');
                     const hfResult = await callHuggingFace(hfKey, prompt, dbType, database, tables, actualModel, temperature);
                     sql = hfResult.sql;
@@ -187,7 +218,7 @@ export async function POST(request: NextRequest) {
 }
 
 function determineProvider(geminiKey?: string, openaiKey?: string, anthropicKey?: string): string {
-    const hfKey = process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN;
+    const hfKey = process.env.HUGGINGFACE_API_KEY || process.env.HUGGING_FACE_API_KEY || process.env.HF_TOKEN;
     if (hfKey) return 'huggingface'; // Prioritize free Hugging Face
     if (geminiKey) return 'gemini';
     if (openaiKey) return 'openai';

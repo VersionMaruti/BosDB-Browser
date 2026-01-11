@@ -12,25 +12,26 @@ const activeConnections = new Map<string, string>(); // connectionId -> adapterI
 
 export async function GET(request: NextRequest) {
     try {
-        // Get user email and org ID from headers (optional for backward compatibility)
+        // Get user email and org ID from headers
         const userEmail = request.headers.get('x-user-email');
         const orgId = request.headers.get('x-org-id');
 
-        let visibleConnections;
-
-        if (userEmail || orgId) {
-            // Filter connections: 
-            // 1. Owned by user (userEmail matches)
-            // 2. Shared with organization (organizationId matches)
-            visibleConnections = Array.from(connections.values()).filter(conn => {
-                const isOwner = userEmail && conn.userEmail === userEmail;
-                const isOrgShared = orgId && conn.organizationId === orgId;
-                return isOwner || isOrgShared;
-            });
-        } else {
-            // Backward compatibility: show all connections if no context provided
-            visibleConnections = Array.from(connections.values());
+        // ⚠️ SECURITY FIX: Require authentication
+        if (!userEmail && !orgId) {
+            return NextResponse.json(
+                { error: 'Unauthorized - Please login to view connections' },
+                { status: 401 }
+            );
         }
+
+        // Filter connections by user or organization
+        const visibleConnections = Array.from(connections.values()).filter(conn => {
+            const isOwner = userEmail && conn.userEmail === userEmail;
+            const isOrgShared = orgId && conn.organizationId === orgId;
+            return isOwner || isOrgShared;
+        });
+
+        logger.info(`User ${userEmail || 'org:' + orgId} viewing ${visibleConnections.length} connections`);
 
         return NextResponse.json({
             connections: visibleConnections.map((conn) => ({

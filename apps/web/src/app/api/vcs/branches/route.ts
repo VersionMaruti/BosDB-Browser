@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createVersionControl } from '@bosdb/version-control';
-import { FileStorage } from '@bosdb/version-control';
-import path from 'path';
+import { getBranchesFromStorage, createBranchInStorage, switchBranch, getCurrentBranch } from '@/lib/vcs-storage';
 
 // GET /api/vcs/branches?connectionId=xxx - List branches
 export async function GET(request: NextRequest) {
@@ -13,26 +11,16 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const vcsPath = path.join(process.cwd(), '.bosdb-vcs', connectionId);
-        const storage = new FileStorage(vcsPath);
-        await storage.initialize();
+        const branches = await getBranchesFromStorage(connectionId);
+        const currentBranch = await getCurrentBranch(connectionId);
 
-        const vc = createVersionControl(connectionId, storage);
-
-        // Ensure initialized and state is loaded
-        await vc.initialize();
-        await vc.loadHEAD();
-
-        const result = await vc.listBranches();
-        const currentBranch = await vc.getCurrentBranch();
-
-        if (!result.success) {
-            return NextResponse.json({ error: result.error }, { status: 500 });
-        }
-
-        return NextResponse.json({ branches: result.data, currentBranch });
+        return NextResponse.json({
+            branches: branches.map(b => b.name),
+            currentBranch
+        });
     } catch (error) {
-        return NextResponse.json({ error: String(error) }, { status: 500 });
+        console.error('Get branches error:', error);
+        return NextResponse.json({ branches: ['main'], currentBranch: 'main' });
     }
 }
 
@@ -46,29 +34,17 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const vcsPath = path.join(process.cwd(), '.bosdb-vcs', connectionId);
-        const storage = new FileStorage(vcsPath);
-        await storage.initialize();
-
-        const vc = createVersionControl(connectionId, storage);
-
-        // Ensure initialized and state is loaded
-        await vc.initialize();
-        await vc.loadHEAD();
-
-        let result;
-        if (action === 'checkout') {
-            result = await vc.checkout(name);
+        if (action === 'create') {
+            await createBranchInStorage(connectionId, name);
+            return NextResponse.json({ success: true, branch: name });
+        } else if (action === 'checkout') {
+            await switchBranch(connectionId, name);
+            return NextResponse.json({ success: true, currentBranch: name });
         } else {
-            result = await vc.createBranch(name);
+            return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
         }
-
-        if (!result.success) {
-            return NextResponse.json({ error: result.error }, { status: 500 });
-        }
-
-        return NextResponse.json({ success: true, data: result.data });
     } catch (error) {
+        console.error('Branch operation error:', error);
         return NextResponse.json({ error: String(error) }, { status: 500 });
     }
 }

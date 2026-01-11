@@ -6,7 +6,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Play, Pause, StepForward, Square, Bug, Trash2, RotateCcw } from 'lucide-react';
+import { Play, Pause, StepForward, Square, Bug, Trash2, RotateCcw, X } from 'lucide-react';
 
 interface DebuggerPanelProps {
     connectionId: string;
@@ -19,6 +19,7 @@ interface DebuggerPanelProps {
     setStatus: (status: 'stopped' | 'running' | 'paused') => void;
     currentLine: number | null;
     setCurrentLine: (line: number | null) => void;
+    onClose?: () => void; // Optional close callback
 }
 
 export default function DebuggerPanel({
@@ -32,6 +33,7 @@ export default function DebuggerPanel({
     setStatus,
     currentLine,
     setCurrentLine,
+    onClose, // Add close handler
 }: DebuggerPanelProps) {
     const [variables, setVariables] = useState<{ name: string; value: any }[]>([]);
 
@@ -75,7 +77,19 @@ export default function DebuggerPanel({
     const handleResume = async () => {
         if (!sessionId) return;
         try {
-            await fetch(`/api/debug/sessions/${sessionId}/control/resume`, { method: 'POST' });
+            const res = await fetch(`/api/debug/sessions/${sessionId}/continue`, { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.completed) {
+                    setStatus('stopped');
+                    setSessionId(null);
+                    setCurrentLine(null);
+                    alert('✅ Debugging completed!');
+                } else if (data.pausedAt) {
+                    setCurrentLine(data.pausedAt);
+                    setStatus('paused');
+                }
+            }
             setStatus('running');
             setCurrentLine(null);
             setVariables([]);
@@ -86,75 +100,82 @@ export default function DebuggerPanel({
 
     const handleStep = async () => {
         if (!sessionId) return;
+        console.log('[Debug] Stepping with session ID:', sessionId);
         try {
-            await fetch(`/api/debug/sessions/${sessionId}/control/step`, { method: 'POST' });
-            // Polling will update currentLine
+            const res = await fetch(`/api/debug/sessions/${sessionId}/step`, { method: 'POST' });
+            console.log('[Debug] Step response status:', res.status);
+            if (res.ok) {
+                const data = await res.json();
+                console.log('[Debug] Step response data:', data);
+                if (data.success && data.currentStatement) {
+                    setCurrentLine(data.currentStatement.lineNumber);
+                    setStatus('paused');
+                } else if (data.error) {
+                    alert(`Step failed: ${data.error}`);
+                }
+            } else {
+                const errorText = await res.text();
+                console.error('[Debug] Step failed with status:', res.status, errorText);
+                alert(`Step failed: ${errorText}`);
+            }
         } catch (e) {
             console.error('Failed to step:', e);
         }
     };
 
     const handleRewind = async () => {
-        if (!sessionId) return;
-        try {
-            await fetch(`/api/debug/sessions/${sessionId}/control/rewind`, { method: 'POST' });
-            // Polling will update currentLine
-        } catch (e) {
-            console.error('Failed to rewind:', e);
-        }
+        // Not implemented yet
+        alert('⚠️ Step back feature coming soon!');
     };
 
     const handleStop = async () => {
         if (!sessionId) return;
-        try {
-            await fetch(`/api/debug/sessions/${sessionId}`, { method: 'DELETE' });
-            setStatus('stopped');
-            setSessionId(null);
-            setCurrentLine(null);
-            setVariables([]);
-        } catch (e) {
-            console.error('Failed to stop:', e);
-        }
+        setStatus('stopped');
+        setSessionId(null);
+        setCurrentLine(null);
+        setVariables([]);
     };
 
     const handleStartDebug = async () => {
-        let currentSessionId = sessionId;
-        if (!currentSessionId) {
-            // Create session
+        try {
+            // Create debug session with our new API
             const res = await fetch('/api/debug/sessions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ connectionId }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                currentSessionId = data.sessionId;
-                setSessionId(currentSessionId);
-            } else {
-                return;
-            }
-        }
-
-        setStatus('running');
-
-        // Start execution
-        try {
-            fetch(`/api/debug/sessions/${currentSessionId}/execute`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    connectionId,
                     query: currentQuery,
-                    connectionId
+                    breakpoints
                 }),
             });
+
+            if (!res.ok) {
+                console.error('Failed to create debug session');
+                return;
+            }
+
+            const data = await res.json();
+            console.log('[Debug] Session created:', data);
+            const newSessionId = data.session?.id;
+
+            if (newSessionId) {
+                console.log('[Debug] Setting session ID:', newSessionId);
+                setSessionId(newSessionId);
+                setStatus('paused');
+                setCurrentLine(breakpoints.length > 0 ? breakpoints[0] : 1);
+                alert('✅ Debug session started! Click "Step" or "Resume" to execute.');
+            } else {
+                console.error('[Debug] No session ID in response:', data);
+                alert('❌ Failed to get session ID from response');
+            }
         } catch (e) {
-            console.error('Failed to start execution:', e);
-            setStatus('stopped');
+            console.error('Failed to start debugging:', e);
+            alert('❌ Failed to start debugging. Check console for errors.');
         }
     };
 
     return (
-        <div className="w-72 border-l border-border bg-background flex flex-col h-full">
+        <div className="w-[450px] border-l border-border bg-background flex flex-col h-full shadow-lg">{/* BIGGER PANEL - 450px */}
             {/* Header */}
             <div className="p-3 border-b border-border">
                 <div className="flex items-center justify-between mb-2">
@@ -162,11 +183,22 @@ export default function DebuggerPanel({
                         <Bug className="w-4 h-4" />
                         Debugger
                     </h3>
-                    <div className={`px-2 py-0.5 text-xs rounded font-medium ${status === 'running' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                        status === 'paused' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                            'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
-                        }`}>
-                        {status.toUpperCase()}
+                    <div className="flex items-center gap-2">
+                        <div className={`px-2 py-0.5 text-xs rounded font-medium ${status === 'running' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                            status === 'paused' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
+                                'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                            }`}>
+                            {status.toUpperCase()}
+                        </div>
+                        {onClose && (
+                            <button
+                                onClick={onClose}
+                                className="p-1 hover:bg-accent rounded transition text-muted-foreground hover:text-foreground"
+                                title="Close Debugger"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
                     </div>
                 </div>
 

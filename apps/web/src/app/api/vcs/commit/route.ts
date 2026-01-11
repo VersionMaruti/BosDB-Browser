@@ -1,73 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createVersionControl } from '@bosdb/version-control';
-import { FileStorage } from '@bosdb/version-control';
-import path from 'path';
-import { promises as fs } from 'fs';
+import { createCommit, getCommits, getPendingChangesFromStorage, getCurrentBranch } from '@/lib/vcs-storage';
 
 // POST /api/vcs/commit - Create a commit
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { connectionId, message, author, changes, snapshot } = body;
+        const { connectionId, message, author } = body;
 
         if (!connectionId || !message) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        // Initialize VCS
-        const vcsPath = path.join(process.cwd(), '.bosdb-vcs', connectionId);
-        const storage = new FileStorage(vcsPath);
-        await storage.initialize();
+        // Get pending changes
+        const changes = await getPendingChangesFromStorage(connectionId);
 
-        const vc = createVersionControl(connectionId, storage);
+        if (changes.length === 0) {
+            return NextResponse.json({ error: 'No pending changes to commit' }, { status: 400 });
+        }
 
-        // Ensure initialized and state is loaded
-        await vc.initialize();
-        await (vc as any).loadHEAD();
-
-        // Use provided author or default
-        const commitAuthor = author || {
-            name: 'System User',
-            email: 'user@bosdb.com',
-            timestamp: new Date()
-        };
+        // Get current branch
+        const branch = await getCurrentBranch(connectionId);
 
         // Create commit
-        const result = await vc.commit(
+        const commitId = `commit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const commit = {
+            id: commitId,
+            connectionId,
+            branch,
             message,
-            { ...commitAuthor, timestamp: new Date() },
-            changes || [],
-            snapshot || { schema: { tables: {} }, data: { tables: {} }, timestamp: new Date() }
-        );
+            author: author || {
+                name: 'System User',
+                email: 'user@bosdb.com'
+            },
+            changes,
+            timestamp: new Date().toISOString()
+        };
 
-        if (!result.success) {
-            console.error('Commit failed:', result.error);
-            return NextResponse.json({ error: result.error || 'Commit failed' }, { status: 500 });
-        }
+        await createCommit(commit);
 
-        // Remove only the committed changes from pending
-        const pendingPath = path.join(vcsPath, 'pending.json');
-        try {
-            const pendingData = await fs.readFile(pendingPath, 'utf-8');
-            const pending = JSON.parse(pendingData);
-
-            // Filter out the changes that were just committed
-            // Match by operation, target, and query for accurate removal
-            const remainingChanges = pending.changes.filter((pendingChange: any) => {
-                return !changes.some((committedChange: any) =>
-                    pendingChange.operation === committedChange.operation &&
-                    pendingChange.target === committedChange.target &&
-                    pendingChange.query === committedChange.query
-                );
-            });
-
-            await fs.writeFile(pendingPath, JSON.stringify({ changes: remainingChanges }, null, 2));
-        } catch (error) {
-            // If pending file doesn't exist or has issues, just create empty one
-            await fs.writeFile(pendingPath, JSON.stringify({ changes: [] }));
-        }
-
-        return NextResponse.json({ success: true, commit: result.data });
+        return NextResponse.json({ success: true, commit });
     } catch (error) {
         console.error('Commit API error:', error);
         return NextResponse.json({ error: String(error) }, { status: 500 });
@@ -84,30 +55,8 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const vcsPath = path.join(process.cwd(), '.bosdb-vcs', connectionId);
-        await fs.mkdir(vcsPath, { recursive: true });
-
-        const storage = new FileStorage(vcsPath);
-
-        try {
-            await storage.initialize();
-        } catch {
-            // Already initialized
-        }
-
-        const vc = createVersionControl(connectionId, storage);
-
-        // Ensure initialized and state is loaded
-        await vc.initialize();
-        await (vc as any).loadHEAD();
-
-        const result = await vc.log({ maxCount: 50 });
-
-        if (!result.success) {
-            return NextResponse.json({ commits: [] });
-        }
-
-        return NextResponse.json({ commits: result.data || [] });
+        const commits = await getCommits(connectionId);
+        return NextResponse.json({ commits });
     } catch (error) {
         console.error('Get commits error:', error);
         return NextResponse.json({ commits: [] });

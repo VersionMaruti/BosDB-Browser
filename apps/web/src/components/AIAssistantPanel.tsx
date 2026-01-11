@@ -58,10 +58,10 @@ interface ModelConfig {
 const MODEL_OPTIONS: ModelConfig[] = [
     { provider: 'auto', model: 'auto', displayName: '🔄 Auto (Best Available)' },
     // Hugging Face FREE models
+    { provider: 'huggingface', model: 'qwen', displayName: '🆓 Qwen 2.5 Coder (Recommended)' },
     { provider: 'huggingface', model: 'mistral', displayName: '🆓 Mistral 7B (Fast)' },
-    { provider: 'huggingface', model: 'qwen', displayName: '🆓 Qwen 2.5 7B (Smart)' },
     { provider: 'huggingface', model: 'llama', displayName: '🆓 Llama 3.2 3B (Free)' },
-    { provider: 'huggingface', model: 'deepseek', displayName: '🆓 DeepSeek R1 1.5B (Fast)' },
+    { provider: 'huggingface', model: 'deepseek', displayName: '🆓 DeepSeek R1 (Smart)' },
     // Paid models
     { provider: 'gemini', model: 'gemini-1.5-flash', displayName: '⚡ Gemini Flash' },
     { provider: 'gemini', model: 'gemini-1.5-pro', displayName: '🧠 Gemini Pro' },

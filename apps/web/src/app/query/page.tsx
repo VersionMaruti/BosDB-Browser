@@ -188,6 +188,7 @@ function QueryPageContent() {
     const [tabs, setTabs] = useState<QueryTab[]>([]);
     const [activeTabIndex, setActiveTabIndex] = useState(0);
     const [showDebugger, setShowDebugger] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [tabsLoaded, setTabsLoaded] = useState(false);
 
     // Current query is derived from active tab
@@ -294,7 +295,15 @@ function QueryPageContent() {
         }
         setBreakpointsForTab(current);
         syncBreakpointToBackend(line, enabled);
+        setBreakpointsForTab(current);
+        syncBreakpointToBackend(line, enabled);
     }, [currentBreakpoints, setBreakpointsForTab, debugSessionId]);
+
+    // PREVENT STALE CLOSURES IN EDITOR EVENT HANDLERS
+    const toggleBreakpointRef = useRef(toggleBreakpoint);
+    useEffect(() => {
+        toggleBreakpointRef.current = toggleBreakpoint;
+    }, [toggleBreakpoint]);
 
     const addNewTab = useCallback(() => {
         let defaultQuery = '';
@@ -436,6 +445,139 @@ function QueryPageContent() {
             setShowQueryPlan(true);
         } catch (err: any) {
             setError(`EXPLAIN failed: ${err.message}`);
+        } finally {
+            setExecuting(false);
+        }
+    };
+
+    // Handle debug procedure
+    const handleDebugProcedure = async (schemaName: string, procedureName: string, preFilledCall: string = '') => {
+        if (!connectionId || !connectionInfo) return;
+
+        setExecuting(true);
+        setError('');
+        setProcedureMenu(null);
+
+        try {
+            // 1. Fetch Definition
+            let definitionQuery = '';
+            let paramQuery = '';
+
+            const isPostgres = connectionInfo.type === 'postgresql' || connectionInfo.type === 'postgres';
+
+            if (isPostgres) {
+                definitionQuery = `SELECT routine_definition, external_language FROM information_schema.routines WHERE routine_name = '${procedureName}' AND routine_schema = '${schemaName}';`;
+                // Fetch parameters to generate a call template
+                paramQuery = `
+                    SELECT parameter_name, data_type, parameter_mode, ordinal_position
+                    FROM information_schema.parameters
+                    WHERE specific_name = (
+                        SELECT specific_name FROM information_schema.routines 
+                        WHERE routine_name = '${procedureName}' AND routine_schema = '${schemaName}'
+                        LIMIT 1
+                    )
+                    ORDER BY ordinal_position;
+                `;
+            } else if (connectionInfo.type === 'mysql' || connectionInfo.type === 'mariadb') {
+                definitionQuery = `SHOW CREATE PROCEDURE ${schemaName}.${procedureName};`;
+                paramQuery = `
+                    SELECT parameter_name, data_type, parameter_mode
+                    FROM information_schema.parameters
+                    WHERE specific_name = '${procedureName}' AND specific_schema = '${schemaName}'
+                    ORDER BY ordinal_position;
+                `;
+            } else {
+                throw new Error(`Debugging not supported for ${connectionInfo.type}`);
+            }
+
+            // Fetch Definition
+            const resDef = await fetch('/api/query', {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify({ connectionId, query: definitionQuery, timeout: 20000 }),
+            });
+            const dataDef = await resDef.json();
+            if (!resDef.ok) throw new Error(dataDef.error || 'Failed to fetch procedure definition');
+
+            let definition = '';
+            if (isPostgres) {
+                definition = dataDef.rows[0]?.routine_definition || '';
+            } else {
+                definition = dataDef.rows[0]?.['Create Procedure'] || '';
+            }
+
+            if (!definition) throw new Error('Procedure definition is empty or not accessible');
+
+            // Wrap Postgres definition
+            if (isPostgres && !definition.toLowerCase().includes('create or replace')) {
+                const lang = dataDef.rows[0]?.external_language || 'plpgsql';
+                definition = `CREATE OR REPLACE PROCEDURE ${schemaName}.${procedureName}()\nLANGUAGE ${lang}\nAS $$\n${definition}\n$$;`;
+            }
+
+            // 2. Prepare Call Statement
+            let callStatement = preFilledCall;
+
+            if (!callStatement) {
+                // Fetch Parameters to make a template
+                try {
+                    const resParams = await fetch('/api/query', {
+                        method: 'POST',
+                        headers: getHeaders(),
+                        body: JSON.stringify({ connectionId, query: paramQuery, timeout: 5000 }),
+                    });
+                    const dataParams = await resParams.json();
+
+                    if (resParams.ok && dataParams.rows) {
+                        const params = dataParams.rows.map((p: any) => {
+                            const name = p.parameter_name || `p${p.ordinal_position}`;
+                            const type = p.data_type || 'unknown';
+                            return `${name} /* ${type} */`; // Placeholder
+                        });
+
+                        const paramString = params.join(', ');
+                        callStatement = `CALL ${schemaName}.${procedureName}(${paramString});`;
+                    } else {
+                        callStatement = `CALL ${schemaName}.${procedureName}();`;
+                    }
+                } catch (err) {
+                    console.warn('Failed to fetch params for template', err);
+                    callStatement = `CALL ${schemaName}.${procedureName}();`;
+                }
+                callStatement = `\n\n-- 🐞 Debug/Test Call Block\n-- Replace placeholders with values:\n${callStatement}`;
+            } else {
+                callStatement = `\n\n-- 🐞 Debug Execution\n${callStatement}`;
+            }
+
+            // Combine Definition + Call
+            const fullScript = definition + callStatement;
+
+            // Create New Tab for Debugging
+            const newTabId = generateTabId();
+            const newTab: QueryTab = {
+                id: newTabId,
+                name: `🐞 ${procedureName}`,
+                query: fullScript,
+                breakpoints: []
+            };
+
+            // Add tab and switch to it
+            setTabs(prev => {
+                const updated = [...prev, newTab];
+                return updated;
+            });
+
+            // We need to wait for state update to switch tab efficiently, 
+            // but setting index to length (current length matches new index) works if we assume sync or immediate effect
+            // Better: use a small timeout to let React render the new tab
+            setTimeout(() => {
+                setActiveTabIndex(prev => prev + 1); // Or finding index of newTabId
+                setQuery(fullScript);
+                setShowDebugger(true);
+                setWarning('🔍 Debug Tab Opened!\n1. The procedure logic is loaded above.\n2. Click gutter line numbers to set BREAKPOINTS.\n3. Click "Start Debug Session" when ready.');
+            }, 50);
+
+        } catch (err: any) {
+            setError(`Failed to load procedure for debugging: ${err.message}`);
         } finally {
             setExecuting(false);
         }
@@ -636,8 +778,50 @@ function QueryPageContent() {
         setExpandedSchemas(newExpanded);
     };
 
-    const executeQuery = useCallback(async (customQuery?: string) => {
+    const executeQuery = useCallback(async (customQuery?: string, debugMode: boolean = false) => {
         if (!connectionId) return;
+
+        // Debug Mode Check at start
+        if (debugMode) {
+            const raw = (customQuery || query).trim();
+            const callMatch = raw.match(/^\s*CALL\s+([a-zA-Z0-9_"]+)(?:\.([a-zA-Z0-9_"]+))?\s*\(/i);
+            if (callMatch) {
+                // Format: CALL schema.proc(args) or CALL proc(args)
+                let schema = 'public';
+                let proc = callMatch[1];
+
+                // If format is CALL schema.proc
+                if (callMatch[2]) {
+                    schema = callMatch[1];
+                    proc = callMatch[2];
+                }
+
+                // Clean up quotes
+                schema = schema.replace(/["`]/g, '');
+                proc = proc.replace(/["`]/g, '');
+
+                // Pass the FULL original query as the call statement
+                handleDebugProcedure(schema, proc, raw);
+                return;
+            }
+
+            // Support Anonymous Blocks (DO $$, BEGIN...END)
+            const isAnonymousBlock = /^\s*(DO|BEGIN|DECLARE)/i.test(raw);
+            if (isAnonymousBlock) {
+                setQuery(raw); // Just load what they wrote
+                setShowDebugger(true);
+                setWarning('🐞 Debug Mode: Loaded anonymous code block.');
+                return;
+            }
+
+            // Fallback: Wrap generic SQL in a DO block for debugging
+            // This is useful for testing SELECTs logic or singular statements
+            const wrappedBlock = `DO $$\nBEGIN\n    -- Debugging generic statement\n    ${raw};\nEND $$;`;
+            setQuery(wrappedBlock);
+            setShowDebugger(true);
+            setWarning('🐞 Debug Mode: Your SQL was wrapped in a DO block to enable stepping.');
+            return;
+        }
 
         // Use custom query, selected text, or full text
         let rawQuery = (customQuery || query).trim();
@@ -921,123 +1105,132 @@ function QueryPageContent() {
                 </div>
             </header>
 
-            <div className="flex-1 flex">
+            <div className="flex-1 flex overflow-hidden">
                 {/* Sidebar - Schema Explorer */}
-                <aside className="w-64 border-r border-border p-4 overflow-y-auto">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="font-semibold flex items-center gap-2">
-                            <TableIcon className="w-4 h-4" />
-                            Explorer
-                        </h3>
-                        <div className="flex items-center gap-1">
-                            <button
-                                onClick={handleRefresh}
-                                className="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition"
-                                title="Refresh Explorer"
-                            >
-                                <RefreshCw className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => setShowTableDesigner(true)}
-                                className="p-1 hover:bg-accent rounded text-primary"
-                                title="Create New Table"
-                            >
-                                <PlusIcon className="w-4 h-4" />
-                            </button>
+                <aside className={`border-r border-border transition-all duration-300 relative flex flex-col ${sidebarCollapsed ? 'w-12' : 'w-64'}`}>
+                    <button
+                        onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                        className="absolute -right-3 top-4 z-10 p-1 bg-background border border-border rounded-full shadow-sm hover:bg-accent transition"
+                        title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+                    >
+                        <ChevronRight className={`w-3 h-3 transition-transform ${sidebarCollapsed ? '' : 'rotate-180'}`} />
+                    </button>
+                    <div className={`flex-1 flex flex-col overflow-hidden ${sidebarCollapsed ? 'hidden' : 'p-4'}`}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-semibold flex items-center gap-2">
+                                <TableIcon className="w-4 h-4" />
+                                Explorer
+                            </h3>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={handleRefresh}
+                                    className="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition"
+                                    title="Refresh Explorer"
+                                >
+                                    <RefreshCw className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => setShowTableDesigner(true)}
+                                    className="p-1 hover:bg-accent rounded text-primary"
+                                    title="Create New Table"
+                                >
+                                    <PlusIcon className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
-                    </div>
-                    <div className="space-y-1">
-                        {schemas.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No schemas found</p>
-                        ) : (
-                            schemas.map((schema) => (
-                                <div key={schema.name} className="text-sm">
-                                    <button
-                                        onClick={() => toggleSchema(schema.name)}
-                                        className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition"
-                                    >
-                                        {expandedSchemas.has(schema.name) ? (
-                                            <ChevronDown className="w-3 h-3" />
-                                        ) : (
-                                            <ChevronRight className="w-3 h-3" />
+                        <div className="space-y-1">
+                            {schemas.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">No schemas found</p>
+                            ) : (
+                                schemas.map((schema) => (
+                                    <div key={schema.name} className="text-sm">
+                                        <button
+                                            onClick={() => toggleSchema(schema.name)}
+                                            className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition"
+                                        >
+                                            {expandedSchemas.has(schema.name) ? (
+                                                <ChevronDown className="w-3 h-3" />
+                                            ) : (
+                                                <ChevronRight className="w-3 h-3" />
+                                            )}
+                                            <Database className="w-3 h-3" />
+                                            <span className="font-medium">{schema.name}</span>
+                                            <span className="text-xs text-muted-foreground ml-auto">
+                                                ({schema.tableCount})
+                                            </span>
+                                        </button>
+
+                                        {expandedSchemas.has(schema.name) && (
+                                            <div className="ml-6 mt-1 space-y-0.5">
+                                                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 mt-2">Tables</div>
+
+                                                {loadingResources.get(schema.name)?.tables ? (
+                                                    <div className="px-2 py-1 text-xs text-muted-foreground">Loading tables...</div>
+                                                ) : resourceErrors.get(`${schema.name}:tables`) ? (
+                                                    <div className="px-2 py-1 text-xs text-destructive/80" title={resourceErrors.get(`${schema.name}:tables`)}>Error loading tables</div>
+                                                ) : schemaTables.get(schema.name)?.length === 0 ? (
+                                                    <div className="px-2 py-1 text-xs text-muted-foreground italic">No tables</div>
+                                                ) : (
+                                                    schemaTables.get(schema.name)?.map((table) => (
+                                                        <button
+                                                            key={table.name}
+                                                            onClick={() => setQuery(`SELECT * FROM ${schema.name}.${table.name} LIMIT 100;`)}
+                                                            onContextMenu={(e) => handleTableContextMenu(e, table.name, schema.name)}
+                                                            className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
+                                                            title={`Click to query, right-click for options`}
+                                                        >
+                                                            <TableIcon className="w-3 h-3 text-muted-foreground" />
+                                                            <span className="text-xs">{table.name}</span>
+                                                            {table.type && (
+                                                                <span className="text-xs text-muted-foreground ml-auto">
+                                                                    {table.type === 'BASE TABLE' ? 'T' : 'V'}
+                                                                </span>
+                                                            )}
+                                                        </button>
+                                                    ))
+                                                )}
+
+                                                <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 mt-2">Procedures</div>
+
+                                                {loadingResources.get(schema.name)?.procedures ? (
+                                                    <div className="px-2 py-1 text-xs text-muted-foreground">Loading procedures...</div>
+                                                ) : resourceErrors.get(`${schema.name}:procedures`) ? (
+                                                    <div className="px-2 py-1 text-xs text-destructive/80" title={resourceErrors.get(`${schema.name}:procedures`)}>Error loading procedures</div>
+                                                ) : schemaProcedures.get(schema.name)?.length === 0 ? (
+                                                    <div className="px-2 py-1 text-xs text-muted-foreground italic">No procedures</div>
+                                                ) : (
+                                                    schemaProcedures.get(schema.name)?.map((proc) => (
+                                                        <button
+                                                            key={proc.name}
+                                                            onClick={() => setQuery(`CALL ${schema.name}.${proc.name}();`)}
+                                                            onContextMenu={(e) => {
+                                                                e.preventDefault();
+                                                                setProcedureMenu({
+                                                                    x: e.clientX,
+                                                                    y: e.clientY,
+                                                                    procedureName: proc.name,
+                                                                    schemaName: schema.name
+                                                                });
+                                                            }}
+                                                            className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
+                                                            title={`Click to call, right-click for options`}
+                                                        >
+                                                            <FileCode className="w-3 h-3 text-blue-400" />
+                                                            <span className="text-xs">{proc.name}</span>
+                                                        </button>
+                                                    ))
+                                                )}
+                                            </div>
                                         )}
-                                        <Database className="w-3 h-3" />
-                                        <span className="font-medium">{schema.name}</span>
-                                        <span className="text-xs text-muted-foreground ml-auto">
-                                            ({schema.tableCount})
-                                        </span>
-                                    </button>
-
-                                    {expandedSchemas.has(schema.name) && (
-                                        <div className="ml-6 mt-1 space-y-0.5">
-                                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 mt-2">Tables</div>
-
-                                            {loadingResources.get(schema.name)?.tables ? (
-                                                <div className="px-2 py-1 text-xs text-muted-foreground">Loading tables...</div>
-                                            ) : resourceErrors.get(`${schema.name}:tables`) ? (
-                                                <div className="px-2 py-1 text-xs text-destructive/80" title={resourceErrors.get(`${schema.name}:tables`)}>Error loading tables</div>
-                                            ) : schemaTables.get(schema.name)?.length === 0 ? (
-                                                <div className="px-2 py-1 text-xs text-muted-foreground italic">No tables</div>
-                                            ) : (
-                                                schemaTables.get(schema.name)?.map((table) => (
-                                                    <button
-                                                        key={table.name}
-                                                        onClick={() => setQuery(`SELECT * FROM ${schema.name}.${table.name} LIMIT 100;`)}
-                                                        onContextMenu={(e) => handleTableContextMenu(e, table.name, schema.name)}
-                                                        className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
-                                                        title={`Click to query, right-click for options`}
-                                                    >
-                                                        <TableIcon className="w-3 h-3 text-muted-foreground" />
-                                                        <span className="text-xs">{table.name}</span>
-                                                        {table.type && (
-                                                            <span className="text-xs text-muted-foreground ml-auto">
-                                                                {table.type === 'BASE TABLE' ? 'T' : 'V'}
-                                                            </span>
-                                                        )}
-                                                    </button>
-                                                ))
-                                            )}
-
-                                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1 mt-2">Procedures</div>
-
-                                            {loadingResources.get(schema.name)?.procedures ? (
-                                                <div className="px-2 py-1 text-xs text-muted-foreground">Loading procedures...</div>
-                                            ) : resourceErrors.get(`${schema.name}:procedures`) ? (
-                                                <div className="px-2 py-1 text-xs text-destructive/80" title={resourceErrors.get(`${schema.name}:procedures`)}>Error loading procedures</div>
-                                            ) : schemaProcedures.get(schema.name)?.length === 0 ? (
-                                                <div className="px-2 py-1 text-xs text-muted-foreground italic">No procedures</div>
-                                            ) : (
-                                                schemaProcedures.get(schema.name)?.map((proc) => (
-                                                    <button
-                                                        key={proc.name}
-                                                        onClick={() => setQuery(`CALL ${schema.name}.${proc.name}();`)}
-                                                        onContextMenu={(e) => {
-                                                            e.preventDefault();
-                                                            setProcedureMenu({
-                                                                x: e.clientX,
-                                                                y: e.clientY,
-                                                                procedureName: proc.name,
-                                                                schemaName: schema.name
-                                                            });
-                                                        }}
-                                                        className="w-full flex items-center gap-1 px-2 py-1 hover:bg-accent rounded transition text-left"
-                                                        title={`Click to call, right-click for options`}
-                                                    >
-                                                        <FileCode className="w-3 h-3 text-blue-400" />
-                                                        <span className="text-xs">{proc.name}</span>
-                                                    </button>
-                                                ))
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ))
-                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
                     </div>
                 </aside>
 
-                {/* Main Content */}
-                <div className="flex-1 flex flex-col">
+                {/* Main Content - SHRINKS correctly */}
+                <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
                     {/* Top Bar - Database Info */}
                     {connectionInfo && (
                         <div className="bg-accent/30 border-b border-border px-6 py-3 flex items-center justify-between">
@@ -1079,6 +1272,16 @@ function QueryPageContent() {
                             {executing ? 'Executing...' : 'Run (Ctrl+E)'}
                         </button>
 
+                        <button
+                            onClick={() => executeQuery(undefined, true)}
+                            disabled={executing || !query.trim()}
+                            className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50 flex items-center gap-2"
+                            title="Run with Debugger (for CALL statements)"
+                        >
+                            <Bug className="w-4 h-4" />
+                            Debug
+                        </button>
+
                         <div className="w-px h-6 bg-border" />
 
                         <button
@@ -1111,15 +1314,7 @@ function QueryPageContent() {
                             Save
                         </button>
 
-                        {results.length > 0 && (
-                            <button
-                                onClick={() => setShowExportModal(true)}
-                                className="px-3 py-2 border border-border rounded-lg hover:bg-accent transition flex items-center gap-2"
-                            >
-                                <Download className="w-4 h-4" />
-                                Export
-                            </button>
-                        )}
+
 
                         <Link
                             href={`/version-control?connection=${connectionId}`}
@@ -1143,14 +1338,7 @@ function QueryPageContent() {
                             History
                         </button>
 
-                        <button
-                            onClick={() => setShowDebugger(!showDebugger)}
-                            className={`px-3 py-2 border border-border rounded-lg transition flex items-center gap-2 ${showDebugger ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-500' : 'hover:bg-accent'}`}
-                            title="Toggle Debugger Panel"
-                        >
-                            <Bug className="w-4 h-4" />
-                            Debug
-                        </button>
+
 
                         <div className="flex-1" />
 
@@ -1183,7 +1371,8 @@ function QueryPageContent() {
                                         e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
                                         const lineNumber = e.target.position?.lineNumber;
                                         if (lineNumber) {
-                                            toggleBreakpoint(lineNumber);
+                                            // Use ref to access latest state
+                                            toggleBreakpointRef.current(lineNumber);
                                         }
                                     }
                                 });
@@ -1363,7 +1552,7 @@ function QueryPageContent() {
                 {/* Debugger Panel */}
                 {showDebugger && connectionId && (
                     <DebuggerPanel
-                        connectionId={connectionId}
+                        connectionId={connectionId || ''}
                         currentQuery={query}
                         breakpoints={currentBreakpoints}
                         onToggleBreakpoint={toggleBreakpoint}
@@ -1373,6 +1562,7 @@ function QueryPageContent() {
                         setStatus={setDebugStatus}
                         currentLine={debugCurrentLine}
                         setCurrentLine={setDebugCurrentLine}
+                        onClose={() => setShowDebugger(false)}
                     />
                 )}
 
@@ -1487,6 +1677,13 @@ function QueryPageContent() {
                         Execute
                     </button>
                     <button
+                        onClick={() => handleDebugProcedure(procedureMenu.schemaName, procedureMenu.procedureName)}
+                        className="w-full px-4 py-2 text-left text-sm hover:bg-purple-500/10 text-purple-600 font-medium flex items-center gap-2"
+                    >
+                        <Bug className="w-4 h-4" />
+                        Debug Procedure
+                    </button>
+                    <button
                         onClick={() => setQuery(`-- View definition of ${procedureMenu.procedureName}\nSELECT routine_definition FROM information_schema.routines WHERE routine_name = '${procedureMenu.procedureName}' AND routine_schema = '${procedureMenu.schemaName}';`)}
                         className="w-full px-4 py-2 text-left text-sm hover:bg-accent flex items-center gap-2"
                     >
@@ -1526,7 +1723,7 @@ function QueryPageContent() {
             {connectionId && connectionInfo && (
                 <div className="fixed bottom-0 right-0 z-50 p-4">
                     <AIAssistantPanel
-                        connectionId={connectionId}
+                        connectionId={connectionId || ''}
                         connectionInfo={connectionInfo}
                         schemas={schemas.map(s => s.name)}
                         tables={Array.from(schemaTables.entries()).flatMap(([schema, tables]) =>

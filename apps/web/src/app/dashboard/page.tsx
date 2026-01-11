@@ -46,15 +46,16 @@ export default function DashboardPage() {
                 setOrgName(cached.orgName);
             });
         }
-    }, [router]);
 
-    useEffect(() => {
+        // ✅ FIX: Fetch connections AFTER user is confirmed
         fetchConnections();
-    }, []);
+    }, [router]);
 
     const fetchConnections = async () => {
         try {
             const user = getCurrentUser();
+            if (!user) return; // Extra safety check
+
             const headers: HeadersInit = {};
             if (user?.email) {
                 headers['x-user-email'] = user.email;
@@ -63,6 +64,13 @@ export default function DashboardPage() {
                 headers['x-org-id'] = user.organizationId;
             }
             const res = await fetch('/api/connections', { headers });
+
+            if (res.status === 401) {
+                // Unauthorized - redirect to login
+                router.push('/login');
+                return;
+            }
+
             const data = await res.json();
             setConnections(data.connections || []);
         } catch (error) {

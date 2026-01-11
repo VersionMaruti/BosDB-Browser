@@ -17,17 +17,13 @@ interface RouteParams {
 
 export async function POST(_req: NextRequest, { params }: RouteParams) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
         const { sessionId, action } = params;
         const debugEngine = getDebugEngine();
         const session = debugEngine.getSession(sessionId);
 
-        if (!session || session.userId !== user.id) {
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        if (!session) {
+            console.log(`[API] Session ${sessionId} not found`);
+            return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
 
         switch (action) {
@@ -38,25 +34,17 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
                 debugEngine.pause(sessionId);
                 break;
             case 'step':
+            case 'stepOver':
                 await debugEngine.stepOver(sessionId);
                 break;
-            case 'stepInto':
-                await debugEngine.stepInto(sessionId);
-                break;
-            case 'stepOut':
-                await debugEngine.stepOut(sessionId);
-                break;
             case 'rewind':
-                await debugEngine.rewind(sessionId, async (sql: string) => {
-                    const { adapter } = await getConnectedAdapter(session.connectionId);
-                    return await adapter.query(sql);
-                });
+                await debugEngine.rewind(sessionId);
                 break;
             default:
                 return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
         }
 
-        return NextResponse.json({ success: true, status: session.state.status });
+        return NextResponse.json({ success: true, status: session.status });
     } catch (error: any) {
         console.error(`Error performing debug action ${params.action}:`, error);
         return NextResponse.json(

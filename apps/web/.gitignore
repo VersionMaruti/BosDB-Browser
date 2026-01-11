@@ -1,4 +1,12 @@
 logs/
+<<<<<<< Updated upstream
+=======
+
+
+!logs/**/
+!logs/**/.gitkeep
+
+>>>>>>> Stashed changes
 .env
 node_modules
 .turbo

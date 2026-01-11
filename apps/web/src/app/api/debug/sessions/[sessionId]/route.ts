@@ -4,8 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDebugEngine } from '@/lib/debug-engine';
-import { getCurrentUser } from '@/lib/auth';
+import { getDebugSession, deleteSession } from '@/lib/debug-engine';
 
 interface RouteParams {
     params: {
@@ -15,30 +14,20 @@ interface RouteParams {
 
 export async function GET(_req: NextRequest, { params }: RouteParams) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const debugEngine = getDebugEngine();
-        const session = debugEngine.getSession(params.sessionId);
+        const session = getDebugSession(params.sessionId);
 
         if (!session) {
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
-        }
-
-        if (session.userId !== user.id) {
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
         return NextResponse.json({
             session: {
                 id: session.id,
                 connectionId: session.connectionId,
-                createdAt: session.createdAt.toISOString(),
-                config: session.config,
-                state: session.state,
-                metadata: session.metadata,
+                status: session.status,
+                currentStatementIndex: session.currentStatementIndex,
+                breakpoints: session.breakpoints,
+                statements: session.statements.length
             },
         });
     } catch (error: any) {
@@ -52,23 +41,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const debugEngine = getDebugEngine();
-        const session = debugEngine.getSession(params.sessionId);
+        const session = getDebugSession(params.sessionId);
 
         if (!session) {
             return NextResponse.json({ error: 'Session not found' }, { status: 404 });
         }
 
-        if (session.userId !== user.id) {
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
-
-        debugEngine.deleteSession(params.sessionId);
+        deleteSession(params.sessionId);
 
         return NextResponse.json({ success: true });
     } catch (error: any) {

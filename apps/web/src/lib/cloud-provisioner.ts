@@ -55,12 +55,12 @@ function parseConnectionUrl(url: string | undefined, defaultHost: string, defaul
 
 // Parse env vars
 // Parse env vars
-const pgConfig = parseConnectionUrl(process.env.CLOUD_POSTGRES_URL, 'switchyard.proxy.rlwy.net', 50346);
-const mysqlConfig = parseConnectionUrl(process.env.CLOUD_MYSQL_URL, 'metro.proxy.rlwy.net', 55276);
+const pgConfig = parseConnectionUrl(process.env.CLOUD_POSTGRES_URL || 'postgresql://postgres:UeJAQMHXYCDzPOyajszcmcRwUrvCGbqY@switchyard.proxy.rlwy.net:50346/railway', 'switchyard.proxy.rlwy.net', 50346);
+const mysqlConfig = parseConnectionUrl(process.env.CLOUD_MYSQL_URL || 'mysql://root:PqhpMAhXoSxZVQAzdvijMDWDshRLjEFu@metro.proxy.rlwy.net:55276/railway', 'metro.proxy.rlwy.net', 55276);
 const mariadbConfig = parseConnectionUrl(process.env.CLOUD_MARIADB_URL || 'mariadb://railway:eJulnlBH9WQeHy.LaH~dkYfPAGUilm0K@metro.proxy.rlwy.net:54136/railway', 'metro.proxy.rlwy.net', 54136);
-const redisConfig = parseConnectionUrl(process.env.CLOUD_REDIS_URL, 'centerbeam.proxy.rlwy.net', 34540);
-const mongoConfig = parseConnectionUrl(process.env.CLOUD_MONGO_URL, 'mainline.proxy.rlwy.net', 12858);
-const oracleConfig = parseConnectionUrl(process.env.CLOUD_ORACLE_URL, 'trolley.proxy.rlwy.net', 49717);
+const redisConfig = parseConnectionUrl(process.env.CLOUD_REDIS_URL || 'redis://default:CSccVVGRgPHvSbBLSbhEYkQhSrMETECk@centerbeam.proxy.rlwy.net:34540', 'centerbeam.proxy.rlwy.net', 34540);
+const mongoConfig = parseConnectionUrl(process.env.CLOUD_MONGO_URL || 'mongodb://mongo:QpXFweoQZsmLYXxwgwlDyINSBpLLVbLq@mainline.proxy.rlwy.net:12858', 'mainline.proxy.rlwy.net', 12858);
+const oracleConfig = parseConnectionUrl(process.env.CLOUD_ORACLE_URL || 'oracle://system:bosdb_secret@trolley.proxy.rlwy.net:49717/XE', 'trolley.proxy.rlwy.net', 49717);
 
 // Shared Railway database credentials (admin access)
 export const CLOUD_DATABASES = {

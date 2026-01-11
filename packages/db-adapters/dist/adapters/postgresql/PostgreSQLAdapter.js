@@ -149,6 +149,9 @@ class PostgreSQLAdapter extends IDBAdapter_1.BaseDBAdapter {
         }
     }
     async listSchemas(connectionId) {
+        const poolInfo = this.pools.get(connectionId);
+        const dbName = poolInfo?.config.database || '';
+        console.log(`[Postgres] Listing schemas for connection ${connectionId} (DB: ${dbName})`);
         const query = `
       SELECT 
         schema_name as name,
@@ -156,14 +159,19 @@ class PostgreSQLAdapter extends IDBAdapter_1.BaseDBAdapter {
         (SELECT COUNT(*) FROM information_schema.tables 
          WHERE table_schema = s.schema_name) as table_count
       FROM information_schema.schemata s
-      WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+      WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1', 'pg_cache_1')
+      -- Strict Isolation: Show ONLY public, the database itself, or schemas belonging to this project
+      AND (
+        schema_name = 'public' 
+        OR schema_name = $1 
+        OR schema_name LIKE $1 || '_%'
+        OR schema_name LIKE 'bosdb_pg_' || $1 || '_%'
+      )
       ORDER BY schema_name;
     `;
-        const result = await this.executeQuery({
-            connectionId,
-            query,
-            maxRows: 1000,
-        });
+        const pool = poolInfo?.pool || new pg_1.Pool();
+        const result = await pool.query(query, [dbName]);
+        console.log(`[Postgres] Found ${result.rows.length} schemas for DB ${dbName}. Schemas: ${result.rows.map(r => r.name).join(', ')}`);
         return result.rows.map((row) => ({
             name: row.name,
             owner: row.owner,
