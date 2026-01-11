@@ -1,38 +1,25 @@
-logs/
-!logs/**/
-!logs/**/.gitkeep
-
-.env
-node_modules
-.turbo
-apps/web/data/docker-databases
-apps/web/.bosdb-data
-apps/web/.bosdb-vcs
-.env
-.env.local
-.env.production
-dist/
+# Next.js
+.next/
 build/
-coverage/
+dist/
+out/
+
+# Dependencies
+node_modules/
+.pnpm-store
+
+# Environment
+.env
+.env*.local
+
+# Logs
+logs/
 *.log
 npm-debug.log*
-.yarn-debug.log*
-.yarn-error.log*
-.pnpm-debug.log*
-.idea/
-.vscode/
-*.sublime-workspace
-*.sublime-project
-Dockerfile
-Dockerfile.dev
-Dockerfile.prod
-docker-compose.yml
-docker-compose.deploy.yml
-docker-compose.prod.yml
-apps/web/.next
-.next/
-<<<<<<< HEAD
-=======
-node_modules/
+
+# BosDB
+.bosdb-data
+.bosdb-vcs
+
+# Turbo
 .turbo
->>>>>>> 1d71269894da4f45c33bfe44319a4b20b669089e
