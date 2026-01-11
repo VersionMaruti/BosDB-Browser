@@ -177,17 +177,17 @@
     "createdAt": "2026-01-11T12:11:31.813Z",
     "ssl": true
   },
-  "conn_1768133497375_19syg9j57": {
-    "id": "conn_1768133497375_19syg9j57",
-    "name": "My Postgres Database",
-    "type": "postgres",
+  "conn_1767970024628_8wwd4qwvm": {
+    "id": "conn_1767970024628_8wwd4qwvm",
+    "name": "My Mariadb Database",
+    "type": "mariadb",
     "host": "localhost",
-    "port": 50346,
+    "port": 54136,
     "database": "railway",
     "credentials": "wLQR2KJ7fyU1+f5R+Y/fM5O+mIZpsycmILkdprvvoF08/L8jPQQ0c0bZD3eMG9pza9E75C2HqGKJHyBkY7nCkX7It+JeKvMDZ9YmX8c5byti0GLqkuvnAlEcodUHNxfpDpxLOzg=",
     "readOnly": false,
-    "userEmail": "demo@gmail.com",
-    "organizationId": "demo-individual-org",
-    "createdAt": "2026-01-11T12:11:37.375Z"
+    "userEmail": "ritvik@flipkart.com",
+    "organizationId": "flipkart.com",
+    "createdAt": "2026-01-09T14:47:04.628Z"
   }
 }
