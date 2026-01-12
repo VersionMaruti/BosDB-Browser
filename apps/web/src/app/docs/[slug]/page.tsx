@@ -30,6 +30,12 @@ const SLUG_MAP: Record<string, string> = {
     'installation': 'INSTALLATION.md',
 };
 
+export async function generateStaticParams() {
+    return Object.keys(SLUG_MAP).map((slug) => ({
+        slug,
+    }));
+}
+
 export default function DocPage({ params }: Props) {
     const filename = SLUG_MAP[params.slug];
 
